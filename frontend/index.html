@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="EchoSense AI — AI-assisted tinnitus assessment and rehabilitation platform. Calibrated web audiometry, psychoacoustic tinnitus matching, explainable risk prediction and personalised sound therapy."
+    />
+    <title>EchoSense AI · Tinnitus Assessment &amp; Rehabilitation</title>
+    <!-- The brand mark, inline. Kept byte-for-byte equivalent to <BrandMark> in
+         components/ui.tsx: an "E" whose arms step shorter as they descend. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Crect width='36' height='36' rx='4' fill='%23f04a1e'/%3E%3Cg fill='%2317171b'%3E%3Crect x='7' y='8' width='3.6' height='20'/%3E%3Crect x='10.6' y='8' width='19' height='3.6'/%3E%3Crect x='10.6' y='16.2' width='13' height='3.6'/%3E%3Crect x='10.6' y='24.4' width='7' height='3.6'/%3E%3C/g%3E%3C/svg%3E"
+    />
+    <meta name="theme-color" content="#f04a1e" />
+    <script>
+      // Apply the stored theme before first paint so there is no flash of the
+      // wrong palette on reload. Bone paper is the default; dark inverts the press.
+      try {
+        var stored = localStorage.getItem("echosense.theme");
+        var system =
+          window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+            ? "light"
+            : "dark";
+        document.documentElement.setAttribute(
+          "data-theme",
+          stored === "light" || stored === "dark" ? stored : stored === "system" ? system : "light"
+        );
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      EchoSense AI requires JavaScript: the hearing tests and sound therapy are
+      synthesised in the browser with the Web Audio API.
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

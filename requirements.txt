@@ -1,0 +1,8 @@
+# Render (and any other host) looks for a requirements file at the repository
+# root. The real dependency list lives next to the code it serves, so this is a
+# pointer rather than a copy - one file to edit, no chance of the two drifting.
+#
+# This file was previously a raw `pip freeze` redirected from PowerShell, which
+# writes UTF-16. pip cannot read that, so every Render build failed before it
+# installed anything.
+-r backend/requirements.txt

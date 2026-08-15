@@ -1,0 +1,24 @@
+# Web framework
+django==5.1.5
+djangorestframework==3.15.2
+djangorestframework-simplejwt==5.3.1
+django-cors-headers==4.6.0
+
+# Scientific / ML
+numpy==2.2.1
+scipy>=1.13
+scikit-learn==1.6.0
+pandas==2.2.3
+joblib==1.4.2
+
+# Serving
+# gunicorn runs the WSGI app in production; whitenoise serves the built SPA and
+# Django's own static files from the same process, so the deployment is a single
+# service with no separate web server or CDN to configure.
+gunicorn==23.0.0
+whitenoise==6.8.2
+
+# PostgreSQL driver. SQLite is the default and needs nothing installed, but the
+# driver ships anyway so pointing DATABASE_URL at Postgres is purely a config
+# change — a rebuild is never needed to switch.
+psycopg[binary]==3.2.3

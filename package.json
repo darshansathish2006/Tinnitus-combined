@@ -1,0 +1,21 @@
+{
+  "name": "echosense-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI-assisted tinnitus assessment and rehabilitation platform",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "dev": "node scripts/dev.mjs",
+    "dev:api": "node scripts/run.mjs api",
+    "dev:web": "npm --prefix frontend run dev",
+    "train": "node scripts/run.mjs train",
+    "seed": "node scripts/run.mjs seed",
+    "verify": "node scripts/run.mjs verify",
+    "verify:all": "node scripts/run.mjs verify:all",
+    "smoke": "node scripts/run.mjs smoke",
+    "build": "npm --prefix frontend run build",
+    "typecheck": "npm --prefix frontend run typecheck",
+    "migrate": "node scripts/run.mjs migrate",
+    "manage": "node scripts/run.mjs manage"
+  }
+}

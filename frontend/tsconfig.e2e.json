@@ -1,0 +1,18 @@
+{
+  "// note": "The app config is scoped to src/ and pulls in vite/client types. The e2e suite needs @playwright/test and Node globals instead, so it gets its own project rather than widening the app's.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["tests", "playwright.config.ts"]
+}

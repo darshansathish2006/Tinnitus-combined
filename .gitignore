@@ -1,0 +1,39 @@
+# Python — scripts/run.mjs accepts any of these, so ignore all of them.
+backend/.venv/
+backend/venv/
+backend/env/
+__pycache__/
+*.py[cod]
+.env
+
+# Database (regenerate with: npm run seed)
+backend/*.db
+backend/*.db-wal
+backend/*.db-shm
+
+# Trained models (regenerate with: npm run train)
+backend/artifacts/
+
+# Throwaway database used by `npm run smoke` so the demo cohort stays pristine.
+backend/echosense.smoke.sqlite3
+backend/echosense.smoke.sqlite3-wal
+backend/echosense.smoke.sqlite3-shm
+
+# Collected static files (regenerate with: manage.py collectstatic)
+backend/staticfiles/
+
+# Node
+node_modules/
+frontend/dist/
+*.log
+
+# Playwright
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

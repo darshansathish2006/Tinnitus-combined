@@ -1,0 +1,8 @@
+# Render builds on Linux. A shell script committed with CRLF endings fails there
+# with "bad interpreter: /usr/bin/env bash^M", which does not name the real
+# problem — so the ending is pinned rather than left to each clone's
+# core.autocrlf setting.
+*.sh text eol=lf
+
+# The intro video is binary; never let it near line-ending conversion.
+*.mp4 binary

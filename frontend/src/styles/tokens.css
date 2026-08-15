@@ -1,0 +1,251 @@
+/* ==========================================================================
+   EchoSense AI — design tokens
+   ==========================================================================
+   Design language: "Press".
+
+   Swiss editorial printing, not a software dashboard. The reference is a good
+   medical poster or a Wim Crouwel timetable: bone paper, heavy black rules, one
+   loud ink, everything on a visible grid.
+
+   What makes it not look generated:
+
+     - **Borders are ink and they are thick.** 1.5–2px near-black, not a 1px grey
+       hairline. Cards sit on a hard offset shadow with no blur — a printed block
+       casting a flat shadow, which no template does.
+     - **No gradients, no glass, no glow.** Flat colour only.
+     - **Vermilion + cobalt + gold on bone.** A primary-ish triad from print, not
+       the teal/indigo/violet of every generated UI.
+     - **Small radii (4px).** Print corners, not pill buttons.
+     - **Display type is heavy and tight**, set large, with a coloured rule under
+       section heads — the way a printed page announces a section.
+
+   Dark mode inverts the press: ink paper, bone type, the same three inks pushed
+   brighter so they hold on black.
+
+   **The `--on-*` tokens exist because of that inversion.** `--ink` and the status
+   inks swap lightness between themes, so any text painted on one of those
+   surfaces has to swap with them. Hardcoding `#fff` on `var(--ink)` produced a
+   navigation rail that was literally invisible in dark mode — bone text on a bone
+   rail. Every surface that is filled with an ink now has a matching `--on-*`
+   foreground, and nothing paints a literal white on a themed background.
+
+   **The `--*-ink` tokens exist because a colour cannot be both.** Vermilion at
+   full strength is a 3.68:1 background for white text and a 3.62:1 foreground on
+   bone paper — it fails WCAG AA in both directions, and amber is worse at 2.98:1.
+   Rather than dull the brand, each accent is split:
+
+     --signal        the brand fill. Unchanged. Buttons, chips, active nav,
+                     meters, rules, chart series — anywhere it is the *surface*.
+     --on-signal     what is legible on top of that fill. Near-black ink, 4.85:1
+                     on vermilion, which is also what two-colour letterpress
+                     actually looks like.
+     --signal-ink    the same hue darkened until it clears 4.5:1 as *text* on the
+                     darkest paper it can land on. Links, labels, readouts.
+
+   Dark mode needs no split: the brightened accents already clear 4.5:1 on the
+   dark grounds, so `--*-ink` simply aliases the accent there.
+
+   Every ratio in this file was computed, not estimated. Worst cases: text is
+   checked against `--paper-sunken`, foregrounds against their own fill.
+   ========================================================================== */
+
+:root,
+:root[data-theme="light"] {
+  /* -- type ---------------------------------------------------------------- */
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+    "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI Semibold", "Segoe UI",
+    system-ui, -apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Cascadia Mono", "SF Mono", Menlo, Consolas, ui-monospace, monospace;
+  --font-serif: Constantia, Charter, "Iowan Old Style", Georgia, serif;
+
+  --fs-micro: 0.6875rem;
+  --fs-tiny: 0.8125rem;
+  --fs-small: 0.875rem;
+  --fs-body: 0.9375rem;
+  --fs-lead: 1.0625rem;
+  --fs-h4: 1.125rem;
+  --fs-h3: 1.5rem;
+  --fs-h2: 2rem;
+  --fs-h1: 2.75rem;
+  --fs-readout: 2.5rem;
+  --fs-readout-lg: 3.75rem;
+
+  --track-label: 0.09em;
+  --track-display: -0.03em;
+
+  /* -- spacing -------------------------------------------------------------- */
+  --s1: 4px;   --s2: 8px;   --s3: 12px;  --s4: 16px;
+  --s5: 22px;  --s6: 28px;  --s8: 36px;  --s10: 48px;
+  --s12: 60px; --s16: 76px; --s20: 100px;
+
+  --radius: 5px;
+  --radius-sm: 4px;
+  --radius-lg: 6px;
+  --radius-pill: 3px;      /* deliberately square-ish — print, not pills */
+  --hairline: 1.5px;
+  --rail: 232px;           /* left navigation rail */
+
+  /* -- surfaces ------------------------------------------------------------- */
+  --paper: #ece7dc;         /* bone ground */
+  --paper-raised: #fffdf7;  /* card stock */
+  --paper-sunken: #e2dbcc;
+  --paper-deep: #d5ccb9;
+
+  /* Muted text ramp. Each step clears 4.5:1 on --paper-sunken, the darkest
+     surface body text sits on: 6.16 / 5.62 / 4.39. */
+  --ink: #17171b;
+  --ink-2: #4c4c55;
+  --ink-3: #525259;       /* was #78787f — 3.18:1 on a sunken panel */
+  --ink-4: #626269;       /* was #a3a3a9 — 2.24:1, effectively decorative */
+
+  /* Foregrounds for anything painted onto an ink surface (rail, hero, toast,
+     table head). These invert with the theme; `#fff` does not. */
+  --on-ink: #fffdf7;
+  --on-ink-2: rgba(255, 255, 255, 0.72);
+  --on-ink-3: rgba(255, 255, 255, 0.55);
+  --on-ink-line: rgba(255, 255, 255, 0.2);
+  --on-ink-hover: rgba(255, 255, 255, 0.1);
+
+  /* Foregrounds for the status fills, each ≥4.5:1 on its own fill.
+     signal 4.85 (ink) · data 5.91 · ok 5.02 · warn 5.89 (ink) · crit 5.45 */
+  --on-signal: #17171b;   /* white was 3.68:1 — the one AA failure on a button */
+  --on-signal-2: rgba(23, 23, 27, 0.76);
+  --on-data: #ffffff;
+  --on-ok: #ffffff;
+  --on-warn: #17171b;
+  --on-crit: #ffffff;
+  --on-info: #ffffff;
+
+  /* Accents as *text*. Darkened until each clears 4.5:1 on --paper-sunken
+     (4.53 / 4.56 / 4.56 / 4.58 / 4.53) and on its own wash panel (4.90-5.48). */
+  --signal-ink: #af3616;
+  --data-ink: #2948f5;
+  --ok-ink: #176e41;
+  --warn-ink: #855600;
+  --crit-ink: #bf162b;
+  --info-ink: #2948f5;
+
+  /* Rules are ink. That single decision does most of the work. */
+  --line: #17171b;
+  --line-strong: #17171b;
+  --line-faint: rgba(23, 23, 27, 0.16);
+
+  /* Primary — vermilion. The loud ink. */
+  --signal: #f04a1e;
+  /* Hover brightens rather than darkens: darkening dropped ink-on-vermilion to
+     3.84:1, so the button lost contrast at the moment of interaction. */
+  --signal-hot: #ff5c30;
+  --signal-wash: #fbe3da;
+  --signal-line: #17171b;
+
+  /* Secondary — cobalt, for the second data dimension. */
+  --data: #2b4bff;
+  --data-2: #1f38cc;
+  --data-wash: #dfe3ff;
+
+  /* Status. Flat, printed colours. */
+  --ok: #1a7f4b;
+  --ok-wash: #d9ecdf;
+  --warn: #cc8500;
+  --warn-wash: #fbeed0;
+  --crit: #d0182f;
+  --crit-wash: #fadde0;
+  --info: #2b4bff;
+  --info-wash: #dfe3ff;
+
+  --gold: #f2c500;
+
+  /* Audiogram convention: right ear red, left ear blue. */
+  --ear-right: #d0182f;
+  --ear-left: #2b4bff;
+
+  --focus: #2b4bff;
+
+  /* Hard offset shadows — a printed block, no blur anywhere. */
+  --shadow-sm: 2px 2px 0 var(--ink);
+  --shadow: 4px 4px 0 var(--ink);
+  --shadow-lg: 7px 7px 0 var(--ink);
+  --glow: none;
+  --shadow-inset: none;
+  --grain-opacity: 0.05;
+}
+
+:root[data-theme="dark"] {
+  /* -- the press inverted --------------------------------------------------- */
+  --paper: #131316;
+  --paper-raised: #1c1c21;
+  --paper-sunken: #101013;
+  --paper-deep: #0b0b0d;
+
+  --ink: #f2ede2;
+  --ink-2: #b9b4a9;
+  /* Lifted just enough to clear 4.5:1 on the tinted wash panels (crit, warn,
+     signal), which are lighter grounds than the plain dark card. */
+  --ink-3: #918d86;       /* 4.75 -> 5.13 on card, 4.72 on a wash */
+  --ink-4: #8f8a82;       /* was #615e59 — 2.6:1 on the dark card, below AA */
+
+  /* The rail, hero, toast and table head are filled with `--ink`, which is bone
+     here. Their foreground has to be the dark paper, not white. */
+  --on-ink: #17171b;
+  --on-ink-2: rgba(23, 23, 27, 0.74);
+  --on-ink-3: rgba(23, 23, 27, 0.6);
+  --on-ink-line: rgba(23, 23, 27, 0.22);
+  --on-ink-hover: rgba(23, 23, 27, 0.09);
+
+  /* Every status ink is brightened for the dark ground, which puts all of them
+     below 3:1 against white. They all take ink text here.
+     signal 6.28 · data 6.22 · ok 8.09 · warn 8.66 · crit 6.06 */
+  --on-signal: #17171b;
+  --on-signal-2: rgba(23, 23, 27, 0.78);
+  --on-data: #17171b;
+  --on-ok: #17171b;
+  --on-warn: #17171b;
+  --on-crit: #17171b;
+  --on-info: #17171b;
+
+  /* No split needed here: the brightened accents already clear 4.5:1 as text on
+     every dark ground (5.76-8.22 on the card, 5.30-7.57 on a wash). */
+  --signal-ink: var(--signal);
+  --data-ink: var(--data);
+  --ok-ink: var(--ok);
+  --warn-ink: var(--warn);
+  --crit-ink: var(--crit);
+  --info-ink: var(--info);
+
+  --line: #f2ede2;
+  --line-strong: #f2ede2;
+  --line-faint: rgba(242, 237, 226, 0.18);
+
+  --signal: #ff6a3d;
+  --signal-hot: #ff8a63;
+  --signal-wash: #3a1b10;
+  --signal-line: #f2ede2;
+
+  --data: #7d90ff;
+  --data-2: #9aa8ff;
+  --data-wash: #1a1e3d;
+
+  --ok: #4bc47f;
+  --ok-wash: #12281c;
+  --warn: #e8a93c;
+  --warn-wash: #2e2312;
+  --crit: #ff5f70;
+  --crit-wash: #34161a;
+  --info: #7d90ff;
+  --info-wash: #1a1e3d;
+
+  --gold: #ffd93d;
+
+  --ear-right: #ff5f70;
+  --ear-left: #7d90ff;
+
+  --focus: #7d90ff;
+
+  --shadow-sm: 2px 2px 0 var(--ink);
+  --shadow: 4px 4px 0 var(--ink);
+  --shadow-lg: 7px 7px 0 var(--ink);
+  --glow: none;
+  --shadow-inset: none;
+  --grain-opacity: 0.04;
+}
