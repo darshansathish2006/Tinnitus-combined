@@ -23,6 +23,12 @@ urlpatterns = [
     path("api/auth/locale", views.set_locale),
     path("api/auth/demo-accounts", views.demo_accounts),
 
+    # -- community ---------------------------------------------------------- #
+    path("api/communities/my-community", views.my_community),
+    path("api/communities/location", views.update_community_location),
+    path("api/communities/posts", views.create_community_post),
+    path("api/communities/posts/<int:post_id>", views.delete_community_post),
+
     # -- patients ----------------------------------------------------------- #
     path("api/patients/me", views.patient_me),
     path("api/patients", views.patient_list),

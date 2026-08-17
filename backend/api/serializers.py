@@ -20,6 +20,8 @@ from .models import (
     Appointment,
     Assessment,
     ClinicalNote,
+    Community,
+    CommunityPost,
     DiaryEntry,
     Ear,
     MedicationReminder,
@@ -44,6 +46,9 @@ class RegisterSerializer(serializers.Serializer):
     full_name = serializers.CharField(min_length=2, max_length=160)
     role = serializers.ChoiceField(choices=["patient", "clinician"], default="patient")
     locale = serializers.CharField(max_length=12, default="en")
+    country = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
+    state = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
+    city = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
     date_of_birth = serializers.DateField(required=False, allow_null=True)
     sex = serializers.ChoiceField(
         choices=["male", "female", "other", "prefer_not_to_say"], required=False, allow_null=True
@@ -345,3 +350,51 @@ class WhatIfSerializer(serializers.Serializer):
             except (TypeError, ValueError):
                 raise serializers.ValidationError({key: "Must be numeric."}) from None
         return out
+
+
+# --------------------------------------------------------------------------- #
+# Community
+# --------------------------------------------------------------------------- #
+class LocationUpdateSerializer(serializers.Serializer):
+    country = serializers.CharField(max_length=100)
+    state = serializers.CharField(max_length=100)
+    city = serializers.CharField(max_length=100)
+
+    def validate(self, attrs):
+        for field in ["country", "state", "city"]:
+            val = attrs.get(field, "").strip()
+            if not val:
+                raise serializers.ValidationError({field: f"{field.capitalize()} is required."})
+            attrs[field] = val
+        return attrs
+
+
+class CommunitySerializer(serializers.ModelSerializer):
+    member_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Community
+        fields = ["id", "name", "country", "state", "city", "created_at", "member_count"]
+
+    def get_member_count(self, obj: Community) -> int:
+        return obj.members.filter(is_active=True).count()
+
+
+class CommunityPostSerializer(serializers.ModelSerializer):
+    author_name = serializers.CharField(source="author.full_name", read_only=True)
+    is_own_post = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CommunityPost
+        fields = ["id", "community_id", "author_name", "content", "created_at", "updated_at", "is_own_post"]
+
+    def get_is_own_post(self, obj: CommunityPost) -> bool:
+        request = self.context.get("request")
+        if request and getattr(request, "user", None) and request.user.is_authenticated:
+            return obj.author_id == request.user.id
+        return False
+
+
+class CommunityPostCreateSerializer(serializers.Serializer):
+    content = serializers.CharField(min_length=1, max_length=2000, trim_whitespace=True)
+

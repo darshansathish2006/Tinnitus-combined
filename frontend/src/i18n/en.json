@@ -120,7 +120,8 @@
     "results": "Results",
     "guide": "Guide",
     "caseload": "Caseload",
-    "rehabilitation": "Rehabilitation"
+    "rehabilitation": "Rehabilitation",
+    "community": "Community"
   },
   "theme": {
     "switchTo": "Switch to {{mode}} mode",

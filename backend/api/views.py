@@ -60,6 +60,8 @@ from .models import (
     ChatMessage,
     ClinicalNote,
     ClinicianProfile,
+    Community,
+    CommunityPost,
     DiaryEntry,
     MedicationReminder,
     Patient,
@@ -85,7 +87,11 @@ from .serializers import (
     AssessmentSubmitSerializer,
     ChatRequestSerializer,
     ClinicalNoteSerializer,
+    CommunityPostCreateSerializer,
+    CommunityPostSerializer,
+    CommunitySerializer,
     DiarySerializer,
+    LocationUpdateSerializer,
     LoginSerializer,
     MedicationReminderSerializer,
     PatientProfileUpdateSerializer,
@@ -179,6 +185,53 @@ def login(request):
     return Response(issue_token(user))
 
 
+def get_or_create_community_for_user(user: User, country: str, state: str, city: str) -> Community | None:
+    """Find or create a local tinnitus community matching country + state + city and assign the user."""
+    country_clean = (country or "").strip()
+    state_clean = (state or "").strip()
+    city_clean = (city or "").strip()
+
+    if not country_clean or not state_clean or not city_clean:
+        return None
+
+    title_city = city_clean.title()
+    community_name = f"Tinnitus Support – {title_city}"
+
+    with transaction.atomic():
+        community = (
+            Community.objects.filter(
+                country__iexact=country_clean,
+                state__iexact=state_clean,
+                city__iexact=city_clean,
+            )
+            .select_for_update()
+            .first()
+        )
+
+        if not community:
+            try:
+                community = Community.objects.create(
+                    name=community_name,
+                    country=country_clean,
+                    state=state_clean,
+                    city=city_clean,
+                )
+            except IntegrityError:
+                community = Community.objects.get(
+                    country__iexact=country_clean,
+                    state__iexact=state_clean,
+                    city__iexact=city_clean,
+                )
+
+        user.country = country_clean
+        user.state = state_clean
+        user.city = city_clean
+        user.community = community
+        user.save(update_fields=["country", "state", "city", "community"])
+
+    return community
+
+
 @api_view(["POST"])
 @permission_classes([AllowAny])
 @transaction.atomic
@@ -193,18 +246,12 @@ def register(request):
         full_name=data["full_name"],
         role=data["role"],
         locale=data.get("locale", "en"),
+        country=(data.get("country") or "").strip(),
+        state=(data.get("state") or "").strip(),
+        city=(data.get("city") or "").strip(),
     )
 
     if user.role == Role.PATIENT:
-        # **Deliberately unassigned.** A new patient starts with no clinician.
-        #
-        # This used to round-robin the smallest caseload, which meant a patient
-        # was allocated a doctor before they had ever seen one, and every screen
-        # then asserted "your clinician is Dr X" about a relationship neither
-        # party had agreed to. The care relationship now forms from an explicit
-        # choice — `POST /api/consultation/select-clinician`, or the first
-        # booking — and until then the "Your clinician" surfaces stay hidden
-        # rather than showing a name the patient did not pick.
         Patient.objects.create(
             user=user,
             clinician=None,
@@ -212,6 +259,12 @@ def register(request):
             date_of_birth=data.get("date_of_birth"),
             sex=data.get("sex") or "",
         )
+
+    country = data.get("country")
+    state = data.get("state")
+    city = data.get("city")
+    if country and state and city:
+        get_or_create_community_for_user(user, country, state, city)
 
     return Response(issue_token(user), status=status.HTTP_201_CREATED)
 
@@ -225,6 +278,10 @@ def me(request):
         "full_name": user.full_name,
         "role": user.role,
         "locale": user.locale,
+        "country": user.country,
+        "state": user.state,
+        "city": user.city,
+        "community_id": user.community_id,
         "created_at": user.created_at,
         "last_login": user.last_login,
     }
@@ -232,6 +289,126 @@ def me(request):
     if patient:
         out["patient"] = PatientSerializer(patient).data
     return Response(out)
+
+
+# --------------------------------------------------------------------------- #
+# Community Views
+# --------------------------------------------------------------------------- #
+def _build_my_community_response(user: User, request) -> Response:
+    if not user.community:
+        return Response({
+            "has_community": False,
+            "community": None,
+            "user_location": {
+                "country": user.country,
+                "state": user.state,
+                "city": user.city,
+            },
+            "announcements": [],
+            "resources": [],
+            "posts": [],
+        })
+
+    community = user.community
+    announcements = [
+        {
+            "id": 1,
+            "title": f"Welcome to {community.name}",
+            "content": f"Connect, share non-medical coping tips, and support fellow tinnitus patients in {community.city}.",
+            "created_at": community.created_at.isoformat(),
+        }
+    ]
+    resources = [
+        {
+            "id": 1,
+            "title": "Understanding Sound Therapy & Habituation",
+            "category": "Sound Therapy",
+            "link": "/rehabilitation",
+        },
+        {
+            "id": 2,
+            "title": "Cognitive Reframing for Tinnitus Stress",
+            "category": "CBT",
+            "link": "/guide",
+        },
+        {
+            "id": 3,
+            "title": "Local Support Group Guidelines & Patient Privacy",
+            "category": "Community Guidelines",
+            "link": None,
+        },
+    ]
+
+    posts = CommunityPost.objects.filter(community=community).select_related("author").order_by("-created_at")[:50]
+    posts_data = CommunityPostSerializer(posts, many=True, context={"request": request}).data
+
+    return Response({
+        "has_community": True,
+        "community": CommunitySerializer(community).data,
+        "user_location": {
+            "country": user.country,
+            "state": user.state,
+            "city": user.city,
+        },
+        "announcements": announcements,
+        "resources": resources,
+        "posts": posts_data,
+    })
+
+
+@api_view(["GET"])
+def my_community(request):
+    return _build_my_community_response(request.user, request)
+
+
+@api_view(["POST"])
+def update_community_location(request):
+    serializer = LocationUpdateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    c = serializer.validated_data["country"]
+    s = serializer.validated_data["state"]
+    ct = serializer.validated_data["city"]
+
+    get_or_create_community_for_user(request.user, c, s, ct)
+    audit(request, "update_location", "community", request.user.community_id, country=c, state=s, city=ct)
+    return _build_my_community_response(request.user, request)
+
+
+@api_view(["POST"])
+def create_community_post(request):
+    user = request.user
+    if not user.community:
+        return Response({"detail": "You must join a community before posting."}, status=status.HTTP_400_BAD_REQUEST)
+
+    serializer = CommunityPostCreateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    post = CommunityPost.objects.create(
+        community=user.community,
+        author=user,
+        content=serializer.validated_data["content"],
+    )
+    audit(request, "create_post", "community_post", post.id, community_id=user.community_id)
+    return Response(
+        CommunityPostSerializer(post, context={"request": request}).data,
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["DELETE"])
+def delete_community_post(request, post_id: int):
+    user = request.user
+    post = CommunityPost.objects.filter(id=post_id).first()
+    if not post:
+        return Response({"detail": "Post not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if post.author_id != user.id and not user.is_clinician:
+        return Response({"detail": "You can only delete your own posts."}, status=status.HTTP_403_FORBIDDEN)
+
+    post.delete()
+    audit(request, "delete_post", "community_post", post_id)
+    return Response({"detail": "Post deleted."})
+
 
 
 @api_view(["PATCH"])
