@@ -243,6 +243,59 @@ export interface Session {
   patient_id: number | null;
   full_name: string;
   locale: string;
+  country?: string;
+  state?: string;
+  city?: string;
+  community_id?: number | null;
+}
+
+export interface UserLocation {
+  country: string;
+  state: string;
+  city: string;
+}
+
+export interface Community {
+  id: number;
+  name: string;
+  country: string;
+  state: string;
+  city: string;
+  created_at: string;
+  member_count: number;
+}
+
+export interface CommunityPost {
+  id: number;
+  community_id: number;
+  author_name: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+  is_own_post: boolean;
+}
+
+export interface CommunityAnnouncement {
+  id: number;
+  title: string;
+  content: string;
+  created_at: string;
+}
+
+export interface CommunityResource {
+  id: number;
+  title: string;
+  category: string;
+  link: string | null;
+}
+
+export interface CommunityResponse {
+  has_community: boolean;
+  community: Community | null;
+  user_location: UserLocation;
+  announcements: CommunityAnnouncement[];
+  resources: CommunityResource[];
+  posts: CommunityPost[];
 }
 
 export interface PatientProfile {
@@ -949,6 +1002,16 @@ export const api = {
       request<ChatReply>("/api/chat", { method: "POST", body: { message, locale } }),
     history: (limit = 60) => request<{ messages: any[] }>("/api/chat/history", { query: { limit } }),
     clear: () => request<void>("/api/chat/history", { method: "DELETE" }),
+  },
+
+  communities: {
+    myCommunity: () => request<CommunityResponse>("/api/communities/my-community"),
+    updateLocation: (location: { country: string; state: string; city: string }) =>
+      request<CommunityResponse>("/api/communities/location", { method: "POST", body: location }),
+    createPost: (content: string) =>
+      request<CommunityPost>("/api/communities/posts", { method: "POST", body: { content } }),
+    deletePost: (postId: number) =>
+      request<{ detail: string }>(`/api/communities/posts/${postId}`, { method: "DELETE" }),
   },
 
   clinician: {

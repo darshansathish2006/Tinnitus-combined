@@ -84,6 +84,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     full_name = models.CharField(max_length=160)
     role = models.CharField(max_length=16, choices=Role.choices, default=Role.PATIENT, db_index=True)
     locale = models.CharField(max_length=12, default="en")
+    country = models.CharField(max_length=100, blank=True, default="")
+    state = models.CharField(max_length=100, blank=True, default="")
+    city = models.CharField(max_length=100, blank=True, default="")
+    community = models.ForeignKey(
+        "Community", on_delete=models.SET_NULL, null=True, blank=True, related_name="members"
+    )
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     created_at = models.DateTimeField(default=timezone.now)
@@ -619,3 +625,46 @@ class AuditLog(models.Model):
     class Meta:
         db_table = "audit_log"
         ordering = ["-at"]
+
+
+# --------------------------------------------------------------------------- #
+# Community & Location
+# --------------------------------------------------------------------------- #
+class Community(models.Model):
+    name = models.CharField(max_length=255)
+    country = models.CharField(max_length=100, db_index=True)
+    state = models.CharField(max_length=100, db_index=True)
+    city = models.CharField(max_length=100, db_index=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "communities"
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["country", "state", "city"], name="unique_community_location"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.city}, {self.state}, {self.country})"
+
+
+class CommunityPost(models.Model):
+    community = models.ForeignKey(
+        Community, on_delete=models.CASCADE, related_name="posts", db_index=True
+    )
+    author = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="community_posts", db_index=True
+    )
+    content = models.TextField()
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "community_posts"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"Post #{self.id} by {self.author.full_name} in {self.community.name}"
+

@@ -5,11 +5,11 @@ djangorestframework-simplejwt==5.3.1
 django-cors-headers==4.6.0
 
 # Scientific / ML
-numpy==2.2.1
+numpy>=2.0.0
 scipy>=1.13
-scikit-learn==1.6.0
-pandas==2.2.3
-joblib==1.4.2
+scikit-learn>=1.5.0
+pandas>=2.0.0
+joblib>=1.4.2
 
 # Serving
 # gunicorn runs the WSGI app in production; whitenoise serves the built SPA and

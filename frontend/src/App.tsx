@@ -36,6 +36,7 @@ import Results from "./pages/Results";
 import Clinician from "./pages/Clinician";
 import PatientRecord from "./pages/PatientRecord";
 import Guide from "./pages/Guide";
+import Community from "./pages/Community";
 
 /**
  * Patient rail.
@@ -57,6 +58,7 @@ const PATIENT_NAV = [
   { to: "/assessment", labelKey: "nav.assessment" },
   { to: "/rehabilitation", labelKey: "nav.rehabilitation" },
   { to: "/support", labelKey: "nav.support" },
+  { to: "/community", labelKey: "nav.community" },
   { to: "/consultation", labelKey: "nav.consultation" },
   { to: "/results", labelKey: "nav.results" },
   { to: "/guide", labelKey: "nav.guide" },
@@ -330,6 +332,7 @@ export default function App() {
                     links, and in any note a clinician has already written. */}
                 <Route path="/therapy" element={<Navigate to="/rehabilitation" replace />} />
                 <Route path="/support" element={<Chat />} />
+                <Route path="/community" element={<Community />} />
                 <Route path="/consultation" element={<Consultation />} />
                 <Route path="/results" element={<Results />} />
                 <Route path="/guide" element={<Guide />} />

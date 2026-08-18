@@ -38,11 +38,59 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [role, setRole] = useState<"patient" | "clinician">("patient");
+  const [country, setCountry] = useState("");
+  const [state, setState] = useState("");
+  const [city, setCity] = useState("");
   const [busy, setBusy] = useState(false);
+  const [detectingLocation, setDetectingLocation] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const demo = useAsync(() => api.auth.demoAccounts(), []);
   const health = useAsync(() => api.health(), []);
+
+  function handleUseMyLocation() {
+    if (!navigator.geolocation) {
+      toast("Geolocation is not supported by your browser.", "info");
+      return;
+    }
+    setDetectingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`
+          );
+          if (res.ok) {
+            const geo = await res.json();
+            const addr = geo.address || {};
+            const foundCountry = addr.country || "";
+            const foundState = addr.state || addr.region || addr.province || "";
+            const foundCity =
+              addr.city || addr.town || addr.village || addr.municipality || addr.county || "";
+
+            if (foundCountry) setCountry(foundCountry);
+            if (foundState) setState(foundState);
+            if (foundCity) setCity(foundCity);
+
+            toast("Location detected! Please review.", "ok");
+          } else {
+            toast("Could not resolve location address. Please enter details manually.", "info");
+          }
+        } catch {
+          toast("Location service unavailable. Please enter details manually.", "info");
+        } finally {
+          setDetectingLocation(false);
+        }
+      },
+      (err) => {
+        setDetectingLocation(false);
+        toast(`Location access denied or unavailable (${err.message}).`, "info");
+      },
+      { timeout: 10000 }
+    );
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -58,6 +106,9 @@ export default function Login() {
           password,
           full_name: fullName.trim(),
           role,
+          country: country.trim(),
+          state: state.trim(),
+          city: city.trim(),
         });
         toast(t("auth.accountCreatedFor", { name: session.full_name }), "ok");
       }
@@ -84,9 +135,6 @@ export default function Login() {
         <div className="topbar__inner">
           <Brand subtitle={t("shell.brandSubtitlePatient")} />
           <span className="spacer" />
-          {/* Full variant, not compact: on the one screen where the reader may
-              not understand a single other word, the control has to name the
-              language it is currently in rather than be a bare globe glyph. */}
           <LanguageSelector />
           <ThemeToggle />
         </div>
@@ -97,10 +145,6 @@ export default function Login() {
           {/* -- pitch ------------------------------------------------------- */}
           <div className="stack stack-5">
             <div className="stack stack-3">
-              {/* No `maxWidth` in ch here. A ch unit is the width of "0" in the
-                  current face, and Tamil and Devanagari set far wider per
-                  character than Latin — an 18ch cap that frames the English
-                  headline cuts the Tamil one to three words a line. */}
               <h1 style={{ fontSize: "clamp(2rem, 4.5vw, 3rem)", maxWidth: "20em" }}>
                 {t("auth.headline")}
               </h1>
@@ -124,7 +168,6 @@ export default function Login() {
                 </Panel>
               ))}
             </div>
-
           </div>
 
           {/* -- auth -------------------------------------------------------- */}
@@ -170,9 +213,47 @@ export default function Login() {
                         <option value="clinician">{t("auth.roleClinician")}</option>
                       </select>
                     </Field>
-                    {/* Shown on the registration form as well as the header: the
-                        language picked here is written onto the new account, so
-                        it is a field of the form as much as a page control. */}
+
+                    {/* Location Section */}
+                    <div className="stack stack-3" style={{ borderTop: "1px solid var(--ink-line)", paddingTop: "var(--s3)" }}>
+                      <div className="row row--between">
+                        <span className="label">Location (Local Community)</span>
+                        <button
+                          type="button"
+                          className="btn btn--sm"
+                          style={{ fontSize: "var(--fs-tiny)" }}
+                          onClick={handleUseMyLocation}
+                          disabled={detectingLocation}
+                        >
+                          {detectingLocation ? "Detecting…" : "Use my location"}
+                        </button>
+                      </div>
+                      <Field label="Country">
+                        <input
+                          className="input"
+                          value={country}
+                          onChange={(e) => setCountry(e.target.value)}
+                          placeholder="e.g. India"
+                        />
+                      </Field>
+                      <Field label="State / Province">
+                        <input
+                          className="input"
+                          value={state}
+                          onChange={(e) => setState(e.target.value)}
+                          placeholder="e.g. Tamil Nadu"
+                        />
+                      </Field>
+                      <Field label="City">
+                        <input
+                          className="input"
+                          value={city}
+                          onChange={(e) => setCity(e.target.value)}
+                          placeholder="e.g. Chennai"
+                        />
+                      </Field>
+                    </div>
+
                     <Field label={t("language.label")}>
                       <LanguageSelector variant="block" align="start" />
                     </Field>
