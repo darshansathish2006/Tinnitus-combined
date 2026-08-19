@@ -37,6 +37,7 @@ import Clinician from "./pages/Clinician";
 import PatientRecord from "./pages/PatientRecord";
 import Guide from "./pages/Guide";
 import Community from "./pages/Community";
+import Settings from "./pages/Settings";
 
 /**
  * Patient rail.
@@ -62,6 +63,7 @@ const PATIENT_NAV = [
   { to: "/consultation", labelKey: "nav.consultation" },
   { to: "/results", labelKey: "nav.results" },
   { to: "/guide", labelKey: "nav.guide" },
+  { to: "/settings", labelKey: "nav.settings" },
 ];
 
 const CLINICIAN_NAV = [
@@ -336,6 +338,7 @@ export default function App() {
                 <Route path="/consultation" element={<Consultation />} />
                 <Route path="/results" element={<Results />} />
                 <Route path="/guide" element={<Guide />} />
+                <Route path="/settings" element={<Settings />} />
                 <Route path="*" element={<NotFound />} />
               </>
             )}

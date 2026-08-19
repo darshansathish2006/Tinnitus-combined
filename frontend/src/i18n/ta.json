@@ -120,7 +120,9 @@
     "results": "முடிவுகள்",
     "guide": "வழிகாட்டி",
     "caseload": "நோயாளிப் பட்டியல்",
-    "rehabilitation": "மறுவாழ்வு"
+    "rehabilitation": "மறுவாழ்வு",
+    "community": "சமூகம்",
+    "settings": "அமைப்புகள்"
   },
   "theme": {
     "switchTo": "{{mode}} பயன்முறைக்கு மாறு",

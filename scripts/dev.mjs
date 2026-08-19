@@ -78,5 +78,12 @@ console.log("\x1b[1mEchoSense AI — development\x1b[0m");
 console.log("  API  http://127.0.0.1:8000/api/health   (Django + DRF)");
 console.log("  Web  http://localhost:5173\n");
 
+const viteJs = join(frontend, "node_modules", "vite", "bin", "vite.js");
+
 start("api", "36", venvPython, ["manage.py", "runserver", "8000"], backend);
-start("web", "35", npm, ["run", "dev"], frontend);
+if (existsSync(viteJs)) {
+  start("web", "35", process.execPath, [viteJs], frontend);
+} else {
+  start("web", "35", npm, ["run", "dev"], frontend);
+}
+

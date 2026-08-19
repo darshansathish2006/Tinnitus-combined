@@ -139,11 +139,11 @@ class CommunityFeatureTests(TestCase):
         )
         self.client.force_authenticate(user=existing_user)
 
-        # GET my-community returns has_community = False gracefully
+        # GET my-community auto-assigns location & returns has_community = True with joined_community = False
         response = self.client.get("/api/communities/my-community")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertFalse(response.data["has_community"])
-        self.assertIsNone(response.data["community"])
+        self.assertTrue(response.data["has_community"])
+        self.assertFalse(response.data["joined_community"])
 
         # Update location to join community
         self.client.post(
@@ -151,12 +151,13 @@ class CommunityFeatureTests(TestCase):
             {"country": "India", "state": "Tamil Nadu", "city": "Chennai"},
             format="json",
         )
+        self.client.post("/api/communities/join", {"join": True}, format="json")
         existing_user.refresh_from_db()
 
         # Create Post
         post_res = self.client.post("/api/communities/posts", {"content": "Hello Chennai community!"}, format="json")
         self.assertEqual(post_res.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(post_res.data["author_name"], "Anonymous Member")
+        self.assertEqual(post_res.data["author_name"], "Old User")
         post_id = post_res.data["id"]
 
         # Verify post appears in community feed
@@ -164,7 +165,7 @@ class CommunityFeatureTests(TestCase):
         self.assertEqual(feed_res.status_code, status.HTTP_200_OK)
         self.assertEqual(len(feed_res.data["posts"]), 1)
         self.assertEqual(feed_res.data["posts"][0]["content"], "Hello Chennai community!")
-        self.assertEqual(feed_res.data["posts"][0]["author_name"], "Anonymous Member")
+        self.assertEqual(feed_res.data["posts"][0]["author_name"], "Old User")
         self.assertTrue(feed_res.data["posts"][0]["is_own_post"])
 
         # Delete Post
@@ -172,8 +173,8 @@ class CommunityFeatureTests(TestCase):
         self.assertEqual(del_res.status_code, status.HTTP_200_OK)
         self.assertEqual(CommunityPost.objects.count(), 0)
 
-    def test_6_strict_anonymous_representation_and_post_privacy(self):
-        """Test 6 — Verify strict anonymous member representation across all users."""
+    def test_6_user_name_display_and_post_privacy(self):
+        """Test 6 — Verify display of user's name on posts while maintaining privacy."""
         community = Community.objects.create(name="Tinnitus Support – Chennai", country="India", state="Tamil Nadu", city="Chennai")
         user_a = User.objects.create_user(
             email="author.a@example.com",
@@ -183,6 +184,7 @@ class CommunityFeatureTests(TestCase):
             state="Tamil Nadu",
             city="Chennai",
             community=community,
+            joined_community=True,
         )
         user_b = User.objects.create_user(
             email="viewer.b@example.com",
@@ -192,15 +194,14 @@ class CommunityFeatureTests(TestCase):
             state="Tamil Nadu",
             city="Chennai",
             community=community,
+            joined_community=True,
         )
 
         # User A creates a post
         self.client.force_authenticate(user=user_a)
-        post_res = self.client.post("/api/communities/posts", {"content": "Anonymous sharing post"}, format="json")
+        post_res = self.client.post("/api/communities/posts", {"content": "Sharing post"}, format="json")
         self.assertEqual(post_res.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(post_res.data["author_name"], "Anonymous Member")
-        self.assertNotIn("Alice Smith", str(post_res.data))
-        self.assertNotIn("author.a@example.com", str(post_res.data))
+        self.assertEqual(post_res.data["author_name"], "Alice Smith")
 
         # User B views community posts
         self.client.force_authenticate(user=user_b)
@@ -209,14 +210,12 @@ class CommunityFeatureTests(TestCase):
         posts = feed_res.data["posts"]
         self.assertEqual(len(posts), 1)
         post_data = posts[0]
-        self.assertEqual(post_data["author_name"], "Anonymous Member")
+        self.assertEqual(post_data["author_name"], "Alice Smith")
         self.assertFalse(post_data["is_own_post"])
 
-        # Confirm no sensitive author info is leaked in post object
+        # Confirm no sensitive author info (email, MRN, phone) is leaked in post object
         for key in post_data.keys():
-            self.assertNotIn(key, ["author", "author_id", "email", "full_name", "user_id", "mrn", "patient_id"])
-        self.assertNotIn("Alice Smith", str(feed_res.data))
-        self.assertNotIn("author.a@example.com", str(feed_res.data))
+            self.assertNotIn(key, ["author", "author_id", "email", "user_id", "mrn", "patient_id"])
 
     def test_7_post_ownership_and_permission_denied_for_other_users(self):
         """Test 7 — User A can delete own post; User B cannot delete User A's post."""
@@ -229,6 +228,7 @@ class CommunityFeatureTests(TestCase):
             state="Tamil Nadu",
             city="Chennai",
             community=community,
+            joined_community=True,
         )
         user_b = User.objects.create_user(
             email="other.b@example.com",
@@ -238,6 +238,7 @@ class CommunityFeatureTests(TestCase):
             state="Tamil Nadu",
             city="Chennai",
             community=community,
+            joined_community=True,
         )
 
         # User A creates post
@@ -261,9 +262,9 @@ class CommunityFeatureTests(TestCase):
     def test_8_active_member_count_excludes_inactive_users(self):
         """Test 8 — Community member count includes active users and excludes inactive users."""
         community = Community.objects.create(name="Tinnitus Support – Delhi", country="India", state="Delhi", city="Delhi")
-        user_1 = User.objects.create_user(email="delhi1@example.com", password="Password123!", full_name="User 1", community=community, is_active=True)
-        user_2 = User.objects.create_user(email="delhi2@example.com", password="Password123!", full_name="User 2", community=community, is_active=True)
-        user_3 = User.objects.create_user(email="delhi3@example.com", password="Password123!", full_name="User 3", community=community, is_active=False)
+        user_1 = User.objects.create_user(email="delhi1@example.com", password="Password123!", full_name="User 1", community=community, joined_community=True, is_active=True)
+        user_2 = User.objects.create_user(email="delhi2@example.com", password="Password123!", full_name="User 2", community=community, joined_community=True, is_active=True)
+        user_3 = User.objects.create_user(email="delhi3@example.com", password="Password123!", full_name="User 3", community=community, joined_community=True, is_active=False)
 
         self.client.force_authenticate(user=user_1)
         res = self.client.get("/api/communities/my-community")

@@ -25,9 +25,14 @@ urlpatterns = [
 
     # -- community ---------------------------------------------------------- #
     path("api/communities/my-community", views.my_community),
+    path("api/communities/join", views.join_community),
     path("api/communities/location", views.update_community_location),
     path("api/communities/posts", views.create_community_post),
     path("api/communities/posts/<int:post_id>", views.delete_community_post),
+    path("api/communities/posts/<int:post_id>/like", views.toggle_like_post),
+    path("api/communities/posts/<int:post_id>/comments", views.create_comment),
+    path("api/communities/comments/<int:comment_id>", views.delete_comment),
+    path("api/communities/chat", views.community_chat),
 
     # -- patients ----------------------------------------------------------- #
     path("api/patients/me", views.patient_me),

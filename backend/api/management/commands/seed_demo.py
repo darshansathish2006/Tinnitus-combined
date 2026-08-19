@@ -470,7 +470,11 @@ class Command(BaseCommand):
             user = User.objects.create_user(
                 email=profile["email"], password=DEMO_PASSWORD, full_name=profile["name"],
                 role=Role.PATIENT, locale=profile.get("locale", "en"),
+                country="India", state="Tamil Nadu", city="Chennai",
+                joined_community=True if index < 8 else False,
             )
+            from api.views import get_or_create_community_for_user
+            get_or_create_community_for_user(user, "India", "Tamil Nadu", "Chennai")
             # Every fourth patient is left unassigned. Patients are not routed to
             # a doctor automatically any more — they choose one when they book —
             # so the cohort has to contain people who have not chosen yet, or the

@@ -263,6 +263,18 @@ export interface Community {
   city: string;
   created_at: string;
   member_count: number;
+  online_count?: number;
+}
+
+export interface CommunityComment {
+  id: number;
+  post_id: number;
+  parent_id: number | null;
+  author_name: string;
+  content: string;
+  created_at: string;
+  is_own_comment: boolean;
+  replies: CommunityComment[];
 }
 
 export interface CommunityPost {
@@ -273,6 +285,22 @@ export interface CommunityPost {
   created_at: string;
   updated_at: string;
   is_own_post: boolean;
+  likes_count: number;
+  is_liked_by_me: boolean;
+  comments_count: number;
+  comments: CommunityComment[];
+}
+
+export interface CommunityChatMessage {
+  id: number;
+  community_id: number;
+  sender_name: string;
+  content: string;
+  created_at: string;
+  is_own_message: boolean;
+  read_by_count: number;
+  read_by_members: string[];
+  unread_members: string[];
 }
 
 export interface CommunityAnnouncement {
@@ -291,11 +319,14 @@ export interface CommunityResource {
 
 export interface CommunityResponse {
   has_community: boolean;
+  joined_community: boolean;
   community: Community | null;
   user_location: UserLocation;
   announcements: CommunityAnnouncement[];
   resources: CommunityResource[];
   posts: CommunityPost[];
+  chat_messages: CommunityChatMessage[];
+  online_count: number;
 }
 
 export interface PatientProfile {
@@ -1006,12 +1037,29 @@ export const api = {
 
   communities: {
     myCommunity: () => request<CommunityResponse>("/api/communities/my-community"),
+    join: (join: boolean) =>
+      request<CommunityResponse>("/api/communities/join", { method: "POST", body: { join } }),
     updateLocation: (location: { country: string; state: string; city: string }) =>
       request<CommunityResponse>("/api/communities/location", { method: "POST", body: location }),
     createPost: (content: string) =>
       request<CommunityPost>("/api/communities/posts", { method: "POST", body: { content } }),
     deletePost: (postId: number) =>
       request<{ detail: string }>(`/api/communities/posts/${postId}`, { method: "DELETE" }),
+    likePost: (postId: number) =>
+      request<{ likes_count: number; is_liked_by_me: boolean }>(`/api/communities/posts/${postId}/like`, {
+        method: "POST",
+      }),
+    createComment: (postId: number, content: string, parentId?: number | null) =>
+      request<CommunityComment>(`/api/communities/posts/${postId}/comments`, {
+        method: "POST",
+        body: { content, parent_id: parentId ?? null },
+      }),
+    deleteComment: (commentId: number) =>
+      request<{ detail: string }>(`/api/communities/comments/${commentId}`, { method: "DELETE" }),
+    getChat: () =>
+      request<{ messages: CommunityChatMessage[]; online_count: number }>("/api/communities/chat"),
+    sendChat: (content: string) =>
+      request<CommunityChatMessage>("/api/communities/chat", { method: "POST", body: { content } }),
   },
 
   clinician: {

@@ -90,6 +90,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     community = models.ForeignKey(
         "Community", on_delete=models.SET_NULL, null=True, blank=True, related_name="members"
     )
+    joined_community = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     created_at = models.DateTimeField(default=timezone.now)
@@ -658,6 +659,9 @@ class CommunityPost(models.Model):
         User, on_delete=models.CASCADE, related_name="community_posts", db_index=True
     )
     content = models.TextField()
+    likes = models.ManyToManyField(
+        User, related_name="liked_community_posts", blank=True
+    )
     created_at = models.DateTimeField(default=timezone.now, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -667,4 +671,47 @@ class CommunityPost(models.Model):
 
     def __str__(self) -> str:
         return f"Post #{self.id} by {self.author.full_name} in {self.community.name}"
+
+
+class CommunityComment(models.Model):
+    post = models.ForeignKey(
+        CommunityPost, on_delete=models.CASCADE, related_name="comments", db_index=True
+    )
+    author = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="community_comments", db_index=True
+    )
+    parent = models.ForeignKey(
+        "self", on_delete=models.CASCADE, null=True, blank=True, related_name="replies", db_index=True
+    )
+    content = models.TextField()
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "community_comments"
+        ordering = ["created_at"]
+
+    def __str__(self) -> str:
+        return f"Comment #{self.id} on Post #{self.post_id}"
+
+
+class CommunityChatMessage(models.Model):
+    community = models.ForeignKey(
+        Community, on_delete=models.CASCADE, related_name="chat_messages", db_index=True
+    )
+    sender = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="community_chat_messages", db_index=True
+    )
+    content = models.TextField()
+    read_by = models.ManyToManyField(
+        User, related_name="read_community_chat_messages", blank=True
+    )
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "community_chat_messages"
+        ordering = ["created_at"]
+
+    def __str__(self) -> str:
+        return f"Chat #{self.id} in {self.community.name}"
+
 
