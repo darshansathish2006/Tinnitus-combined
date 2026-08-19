@@ -201,7 +201,7 @@ export default function Community() {
             <Readout
               label="Community Members"
               value={community?.member_count ?? 1}
-              unit="members"
+              unit="Members"
               tone="signal"
               size="lg"
             />

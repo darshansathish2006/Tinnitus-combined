@@ -381,12 +381,15 @@ class CommunitySerializer(serializers.ModelSerializer):
 
 
 class CommunityPostSerializer(serializers.ModelSerializer):
-    author_name = serializers.CharField(source="author.full_name", read_only=True)
+    author_name = serializers.SerializerMethodField()
     is_own_post = serializers.SerializerMethodField()
 
     class Meta:
         model = CommunityPost
         fields = ["id", "community_id", "author_name", "content", "created_at", "updated_at", "is_own_post"]
+
+    def get_author_name(self, obj: CommunityPost) -> str:
+        return "Anonymous Member"
 
     def get_is_own_post(self, obj: CommunityPost) -> bool:
         request = self.context.get("request")
