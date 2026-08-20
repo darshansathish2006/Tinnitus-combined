@@ -121,7 +121,8 @@
     "guide": "Guide",
     "caseload": "Caseload",
     "rehabilitation": "Rehabilitation",
-    "community": "Community"
+    "community": "Community",
+    "settings": "Settings"
   },
   "theme": {
     "switchTo": "Switch to {{mode}} mode",

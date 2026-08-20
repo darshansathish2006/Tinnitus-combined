@@ -61,6 +61,8 @@ from .models import (
     ClinicalNote,
     ClinicianProfile,
     Community,
+    CommunityComment,
+    CommunityChatMessage,
     CommunityPost,
     DiaryEntry,
     MedicationReminder,
@@ -87,6 +89,8 @@ from .serializers import (
     AssessmentSubmitSerializer,
     ChatRequestSerializer,
     ClinicalNoteSerializer,
+    CommunityChatMessageSerializer,
+    CommunityCommentSerializer,
     CommunityPostCreateSerializer,
     CommunityPostSerializer,
     CommunitySerializer,
@@ -295,29 +299,38 @@ def me(request):
 # Community Views
 # --------------------------------------------------------------------------- #
 def _build_my_community_response(user: User, request) -> Response:
-    if not user.community:
+    if not user.country or not user.state or not user.city:
+        user.country = user.country or "India"
+        user.state = user.state or "Tamil Nadu"
+        user.city = user.city or "Chennai"
+        user.save(update_fields=["country", "state", "city"])
+
+    if not user.community and user.country and user.state and user.city:
+        get_or_create_community_for_user(user, user.country, user.state, user.city)
+
+    user.last_login = timezone.now()
+    user.save(update_fields=["last_login"])
+
+    community = user.community
+    five_mins_ago = timezone.now() - timedelta(minutes=5)
+    online_cnt = max(1, community.members.filter(is_active=True, joined_community=True, last_login__gte=five_mins_ago).count()) if community else 1
+
+    if not user.joined_community:
         return Response({
-            "has_community": False,
-            "community": None,
+            "has_community": True,
+            "joined_community": False,
+            "community": CommunitySerializer(community).data if community else None,
             "user_location": {
                 "country": user.country,
                 "state": user.state,
                 "city": user.city,
             },
-            "announcements": [],
             "resources": [],
             "posts": [],
+            "chat_messages": [],
+            "online_count": online_cnt,
         })
 
-    community = user.community
-    announcements = [
-        {
-            "id": 1,
-            "title": f"Welcome to {community.name}",
-            "content": f"Connect, share non-medical coping tips, and support fellow tinnitus patients in {community.city}.",
-            "created_at": community.created_at.isoformat(),
-        }
-    ]
     resources = [
         {
             "id": 1,
@@ -339,26 +352,53 @@ def _build_my_community_response(user: User, request) -> Response:
         },
     ]
 
-    posts = CommunityPost.objects.filter(community=community).select_related("author").order_by("-created_at")[:50]
+    posts = CommunityPost.objects.filter(community=community).select_related("author").prefetch_related("likes", "comments").order_by("-created_at")[:50]
     posts_data = CommunityPostSerializer(posts, many=True, context={"request": request}).data
+
+    chat_msgs = CommunityChatMessage.objects.filter(community=community).select_related("sender").prefetch_related("read_by").order_by("created_at")[:100]
+    for msg in chat_msgs:
+        if not msg.read_by.filter(id=user.id).exists():
+            msg.read_by.add(user)
+    chat_data = CommunityChatMessageSerializer(chat_msgs, many=True, context={"request": request}).data
 
     return Response({
         "has_community": True,
+        "joined_community": True,
         "community": CommunitySerializer(community).data,
         "user_location": {
             "country": user.country,
             "state": user.state,
             "city": user.city,
         },
-        "announcements": announcements,
         "resources": resources,
         "posts": posts_data,
+        "chat_messages": chat_data,
+        "online_count": online_cnt,
     })
 
 
 @api_view(["GET"])
 def my_community(request):
     return _build_my_community_response(request.user, request)
+
+
+@api_view(["POST"])
+def join_community(request):
+    user = request.user
+    should_join = request.data.get("join", True)
+    if not user.country or not user.state or not user.city:
+        user.country = user.country or "India"
+        user.state = user.state or "Tamil Nadu"
+        user.city = user.city or "Chennai"
+        user.save(update_fields=["country", "state", "city"])
+
+    if user.country and user.state and user.city:
+        get_or_create_community_for_user(user, user.country, user.state, user.city)
+
+    user.joined_community = bool(should_join)
+    user.save(update_fields=["joined_community", "community"])
+    audit(request, "join_community", "community", user.community_id, joined=should_join)
+    return _build_my_community_response(user, request)
 
 
 @api_view(["POST"])
@@ -370,6 +410,8 @@ def update_community_location(request):
     ct = serializer.validated_data["city"]
 
     get_or_create_community_for_user(request.user, c, s, ct)
+    request.user.joined_community = True
+    request.user.save(update_fields=["joined_community"])
     audit(request, "update_location", "community", request.user.community_id, country=c, state=s, city=ct)
     return _build_my_community_response(request.user, request)
 
@@ -377,7 +419,7 @@ def update_community_location(request):
 @api_view(["POST"])
 def create_community_post(request):
     user = request.user
-    if not user.community:
+    if not user.community or not user.joined_community:
         return Response({"detail": "You must join a community before posting."}, status=status.HTTP_400_BAD_REQUEST)
 
     serializer = CommunityPostCreateSerializer(data=request.data)
@@ -408,6 +450,102 @@ def delete_community_post(request, post_id: int):
     post.delete()
     audit(request, "delete_post", "community_post", post_id)
     return Response({"detail": "Post deleted."})
+
+
+@api_view(["POST"])
+def toggle_like_post(request, post_id: int):
+    user = request.user
+    post = CommunityPost.objects.filter(id=post_id).first()
+    if not post:
+        return Response({"detail": "Post not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if post.likes.filter(id=user.id).exists():
+        post.likes.remove(user)
+        liked = False
+    else:
+        post.likes.add(user)
+        liked = True
+
+    return Response({"likes_count": post.likes.count(), "is_liked_by_me": liked})
+
+
+@api_view(["POST"])
+def create_comment(request, post_id: int):
+    user = request.user
+    post = CommunityPost.objects.filter(id=post_id).first()
+    if not post:
+        return Response({"detail": "Post not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    content = (request.data.get("content") or "").strip()
+    if not content:
+        return Response({"detail": "Comment content cannot be empty."}, status=status.HTTP_400_BAD_REQUEST)
+
+    parent_id = request.data.get("parent_id")
+    parent = None
+    if parent_id:
+        parent = CommunityComment.objects.filter(id=parent_id, post=post).first()
+
+    comment = CommunityComment.objects.create(
+        post=post,
+        author=user,
+        parent=parent,
+        content=content,
+    )
+    return Response(
+        CommunityCommentSerializer(comment, context={"request": request}).data,
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["DELETE"])
+def delete_comment(request, comment_id: int):
+    user = request.user
+    comment = CommunityComment.objects.filter(id=comment_id).first()
+    if not comment:
+        return Response({"detail": "Comment not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if comment.author_id != user.id and not user.is_clinician:
+        return Response({"detail": "You can only delete your own comments."}, status=status.HTTP_403_FORBIDDEN)
+
+    comment.delete()
+    return Response({"detail": "Comment deleted."})
+
+
+@api_view(["GET", "POST"])
+def community_chat(request):
+    user = request.user
+    if not user.community:
+        return Response({"detail": "You are not assigned to a community."}, status=status.HTTP_400_BAD_REQUEST)
+
+    user.last_login = timezone.now()
+    user.save(update_fields=["last_login"])
+
+    if request.method == "POST":
+        content = (request.data.get("content") or "").strip()
+        if not content:
+            return Response({"detail": "Message cannot be empty."}, status=status.HTTP_400_BAD_REQUEST)
+
+        msg = CommunityChatMessage.objects.create(
+            community=user.community,
+            sender=user,
+            content=content,
+        )
+        msg.read_by.add(user)
+        return Response(
+            CommunityChatMessageSerializer(msg, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    msgs = CommunityChatMessage.objects.filter(community=user.community).select_related("sender").prefetch_related("read_by").order_by("created_at")[:100]
+    for msg in msgs:
+        if not msg.read_by.filter(id=user.id).exists():
+            msg.read_by.add(user)
+
+    data = CommunityChatMessageSerializer(msgs, many=True, context={"request": request}).data
+    five_mins_ago = timezone.now() - timedelta(minutes=5)
+    online_cnt = max(1, user.community.members.filter(is_active=True, joined_community=True, last_login__gte=five_mins_ago).count())
+    return Response({"messages": data, "online_count": online_cnt})
+
 
 
 

@@ -21,6 +21,8 @@ from .models import (
     Assessment,
     ClinicalNote,
     Community,
+    CommunityComment,
+    CommunityChatMessage,
     CommunityPost,
     DiaryEntry,
     Ear,
@@ -371,22 +373,76 @@ class LocationUpdateSerializer(serializers.Serializer):
 
 class CommunitySerializer(serializers.ModelSerializer):
     member_count = serializers.SerializerMethodField()
+    online_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Community
-        fields = ["id", "name", "country", "state", "city", "created_at", "member_count"]
+        fields = ["id", "name", "country", "state", "city", "created_at", "member_count", "online_count"]
 
     def get_member_count(self, obj: Community) -> int:
         return obj.members.filter(is_active=True).count()
 
+    def get_online_count(self, obj: Community) -> int:
+        from datetime import timedelta
+        from django.utils import timezone
+
+        five_mins_ago = timezone.now() - timedelta(minutes=5)
+        cnt = obj.members.filter(is_active=True, joined_community=True, last_login__gte=five_mins_ago).count()
+        return max(1, cnt)
+
+
+class CommunityCommentSerializer(serializers.ModelSerializer):
+    author_name = serializers.SerializerMethodField()
+    is_own_comment = serializers.SerializerMethodField()
+    replies = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CommunityComment
+        fields = ["id", "post_id", "parent_id", "author_name", "content", "created_at", "is_own_comment", "replies"]
+
+    def get_author_name(self, obj: CommunityComment) -> str:
+        return obj.author.full_name or "Community Member"
+
+    def get_is_own_comment(self, obj: CommunityComment) -> bool:
+        request = self.context.get("request")
+        if request and getattr(request, "user", None) and request.user.is_authenticated:
+            return obj.author_id == request.user.id
+        return False
+
+    def get_replies(self, obj: CommunityComment) -> list[dict[str, Any]]:
+        # Single-level nesting for replies
+        if obj.parent_id is not None:
+            return []
+        replies = obj.replies.all().order_by("created_at")
+        return CommunityCommentSerializer(replies, many=True, context=self.context).data
+
 
 class CommunityPostSerializer(serializers.ModelSerializer):
-    author_name = serializers.CharField(source="author.full_name", read_only=True)
+    author_name = serializers.SerializerMethodField()
     is_own_post = serializers.SerializerMethodField()
+    likes_count = serializers.SerializerMethodField()
+    is_liked_by_me = serializers.SerializerMethodField()
+    comments_count = serializers.SerializerMethodField()
+    comments = serializers.SerializerMethodField()
 
     class Meta:
         model = CommunityPost
-        fields = ["id", "community_id", "author_name", "content", "created_at", "updated_at", "is_own_post"]
+        fields = [
+            "id",
+            "community_id",
+            "author_name",
+            "content",
+            "created_at",
+            "updated_at",
+            "is_own_post",
+            "likes_count",
+            "is_liked_by_me",
+            "comments_count",
+            "comments",
+        ]
+
+    def get_author_name(self, obj: CommunityPost) -> str:
+        return obj.author.full_name or "Community Member"
 
     def get_is_own_post(self, obj: CommunityPost) -> bool:
         request = self.context.get("request")
@@ -394,7 +450,90 @@ class CommunityPostSerializer(serializers.ModelSerializer):
             return obj.author_id == request.user.id
         return False
 
+    def get_likes_count(self, obj: CommunityPost) -> int:
+        return obj.likes.count()
+
+    def get_is_liked_by_me(self, obj: CommunityPost) -> bool:
+        request = self.context.get("request")
+        if request and getattr(request, "user", None) and request.user.is_authenticated:
+            return obj.likes.filter(id=request.user.id).exists()
+        return False
+
+    def get_comments_count(self, obj: CommunityPost) -> int:
+        return obj.comments.count()
+
+    def get_comments(self, obj: CommunityPost) -> list[dict[str, Any]]:
+        top_comments = obj.comments.filter(parent=None).order_by("created_at")
+        return CommunityCommentSerializer(top_comments, many=True, context=self.context).data
+
 
 class CommunityPostCreateSerializer(serializers.Serializer):
     content = serializers.CharField(min_length=1, max_length=2000, trim_whitespace=True)
+
+
+class CommunityChatMessageSerializer(serializers.ModelSerializer):
+    sender_name = serializers.SerializerMethodField()
+    is_own_message = serializers.SerializerMethodField()
+    read_by_count = serializers.SerializerMethodField()
+    read_by_members = serializers.SerializerMethodField()
+    unread_members = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CommunityChatMessage
+        fields = [
+            "id",
+            "community_id",
+            "sender_name",
+            "content",
+            "created_at",
+            "is_own_message",
+            "read_by_count",
+            "read_by_members",
+            "unread_members",
+        ]
+
+    def get_sender_name(self, obj: CommunityChatMessage) -> str:
+        return obj.sender.full_name or "Community Member"
+
+    def get_is_own_message(self, obj: CommunityChatMessage) -> bool:
+        request = self.context.get("request")
+        if request and getattr(request, "user", None) and request.user.is_authenticated:
+            return obj.sender_id == request.user.id
+        return False
+
+    def get_read_by_count(self, obj: CommunityChatMessage) -> int:
+        return obj.read_by.count()
+
+    def get_read_by_members(self, obj: CommunityChatMessage) -> list[str]:
+        request = self.context.get("request")
+        current_user = request.user if request and getattr(request, "user", None) and request.user.is_authenticated else None
+        
+        all_members = list(obj.community.members.filter(is_active=True).order_by("id"))
+        read_ids = set(obj.read_by.values_list("id", flat=True))
+        
+        out = []
+        for m in all_members:
+            if m.id in read_ids:
+                if current_user and m.id == current_user.id:
+                    out.append(f"You ({m.full_name})")
+                else:
+                    out.append(m.full_name)
+        return out
+
+    def get_unread_members(self, obj: CommunityChatMessage) -> list[str]:
+        request = self.context.get("request")
+        current_user = request.user if request and getattr(request, "user", None) and request.user.is_authenticated else None
+
+        all_members = list(obj.community.members.filter(is_active=True).order_by("id"))
+        read_ids = set(obj.read_by.values_list("id", flat=True))
+
+        out = []
+        for m in all_members:
+            if m.id not in read_ids:
+                if current_user and m.id == current_user.id:
+                    out.append(f"You ({m.full_name})")
+                else:
+                    out.append(m.full_name)
+        return out
+
 

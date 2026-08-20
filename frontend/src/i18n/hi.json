@@ -120,7 +120,9 @@
     "results": "परिणाम",
     "guide": "मार्गदर्शिका",
     "caseload": "रोगी सूची",
-    "rehabilitation": "पुनर्वास"
+    "rehabilitation": "पुनर्वास",
+    "community": "समुदाय",
+    "settings": "सेटिंग्स"
   },
   "theme": {
     "switchTo": "{{mode}} मोड पर जाएँ",
