@@ -37,6 +37,7 @@ import Clinician from "./pages/Clinician";
 import PatientRecord from "./pages/PatientRecord";
 import Guide from "./pages/Guide";
 import Community from "./pages/Community";
+import GroupTherapy from "./pages/GroupTherapy";
 import Settings from "./pages/Settings";
 
 /**
@@ -60,6 +61,7 @@ const PATIENT_NAV = [
   { to: "/rehabilitation", labelKey: "nav.rehabilitation" },
   { to: "/support", labelKey: "nav.support" },
   { to: "/community", labelKey: "nav.community" },
+  { to: "/group-therapy", labelKey: "nav.group_therapy" },
   { to: "/consultation", labelKey: "nav.consultation" },
   { to: "/results", labelKey: "nav.results" },
   { to: "/guide", labelKey: "nav.guide" },
@@ -335,6 +337,7 @@ export default function App() {
                 <Route path="/therapy" element={<Navigate to="/rehabilitation" replace />} />
                 <Route path="/support" element={<Chat />} />
                 <Route path="/community" element={<Community />} />
+                <Route path="/group-therapy" element={<GroupTherapy />} />
                 <Route path="/consultation" element={<Consultation />} />
                 <Route path="/results" element={<Results />} />
                 <Route path="/guide" element={<Guide />} />

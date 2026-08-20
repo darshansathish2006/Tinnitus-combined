@@ -715,3 +715,118 @@ class CommunityChatMessage(models.Model):
         return f"Chat #{self.id} in {self.community.name}"
 
 
+# --------------------------------------------------------------------------- #
+# Group Therapy
+# --------------------------------------------------------------------------- #
+class GroupTherapySession(models.Model):
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        ENDED = "ended", "Ended"
+
+    class Activity(models.TextChoices):
+        BREATHING = "breathing", "Breathing & Soundscape"
+        MOOD_CHECKIN = "mood_checkin", "Mood & Distress Check-in"
+        REFLECTION_PROMPT = "reflection_prompt", "Reflection Prompt"
+        GRATITUDE_WALL = "gratitude_wall", "Gratitude Wall"
+
+    host = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="hosted_group_sessions", db_index=True
+    )
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, default="")
+    meet_url = models.URLField(max_length=500, blank=True, default="")
+    invite_code = models.CharField(max_length=10, unique=True, db_index=True)
+    max_participants = models.IntegerField(default=10)
+    participants = models.ManyToManyField(
+        User, related_name="joined_group_sessions", blank=True
+    )
+    status = models.CharField(
+        max_length=16, choices=Status.choices, default=Status.ACTIVE, db_index=True
+    )
+    current_activity = models.CharField(
+        max_length=32, choices=Activity.choices, default=Activity.BREATHING
+    )
+    activity_data = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "group_therapy_sessions"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"Group Session '{self.title}' ({self.invite_code}) by {self.host.full_name}"
+
+
+class GroupTherapyMessage(models.Model):
+    class MessageType(models.TextChoices):
+        CHAT = "chat", "Chat"
+        FEELING_EMOJI = "feeling_emoji", "Feeling Emoji"
+        SYSTEM = "system", "System"
+
+    session = models.ForeignKey(
+        GroupTherapySession, on_delete=models.CASCADE, related_name="messages", db_index=True
+    )
+    sender = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="group_therapy_messages", db_index=True
+    )
+    content = models.TextField()
+    emoji_reaction = models.CharField(max_length=20, blank=True, default="")
+    message_type = models.CharField(
+        max_length=16, choices=MessageType.choices, default=MessageType.CHAT
+    )
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "group_therapy_messages"
+        ordering = ["created_at"]
+
+    def __str__(self) -> str:
+        return f"Message #{self.id} in Session {self.session.invite_code}"
+
+
+class GroupTherapyActivityResponse(models.Model):
+    session = models.ForeignKey(
+        GroupTherapySession, on_delete=models.CASCADE, related_name="activity_responses", db_index=True
+    )
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="group_activity_responses", db_index=True
+    )
+    activity_type = models.CharField(max_length=32, db_index=True)
+    response_data = models.JSONField(default=dict)
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "group_therapy_activity_responses"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"Activity Response by {self.user.full_name} for {self.activity_type}"
+
+
+class GroupTherapyJoinRequest(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        APPROVED = "approved", "Approved"
+        REJECTED = "rejected", "Rejected"
+
+    session = models.ForeignKey(
+        GroupTherapySession, on_delete=models.CASCADE, related_name="join_requests", db_index=True
+    )
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="group_therapy_join_requests", db_index=True
+    )
+    status = models.CharField(
+        max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True
+    )
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "group_therapy_join_requests"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return f"Join Request by {self.user.full_name} for Session {self.session.invite_code} ({self.status})"
+
+
+
+

@@ -23,6 +23,21 @@ urlpatterns = [
     path("api/auth/locale", views.set_locale),
     path("api/auth/demo-accounts", views.demo_accounts),
 
+    # -- group therapy ------------------------------------------------------ #
+    path("api/group-therapy/create", views.create_group_session),
+    path("api/group-therapy/join", views.join_group_session_by_code),
+    path("api/group-therapy/join-request", views.request_join_group_session),
+    path("api/group-therapy/join-request/<int:request_id>", views.get_join_request_status),
+    path("api/group-therapy/my-sessions", views.list_my_group_sessions),
+    path("api/group-therapy/<int:session_id>", views.get_group_session_detail),
+    path("api/group-therapy/<int:session_id>/chat", views.group_session_chat),
+    path("api/group-therapy/<int:session_id>/activity/submit", views.submit_group_activity_response),
+    path("api/group-therapy/<int:session_id>/activity/set", views.set_group_activity),
+    path("api/group-therapy/<int:session_id>/requests", views.list_session_join_requests),
+    path("api/group-therapy/<int:session_id>/requests/<int:request_id>/respond", views.respond_join_request),
+    path("api/group-therapy/<int:session_id>/leave", views.leave_group_session),
+    path("api/group-therapy/<int:session_id>/delete", views.delete_group_session),
+
     # -- community ---------------------------------------------------------- #
     path("api/communities/my-community", views.my_community),
     path("api/communities/join", views.join_community),
