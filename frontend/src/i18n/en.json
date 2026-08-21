@@ -1821,6 +1821,90 @@
     "player": {
       "title": "Sound therapy player",
       "sub": "Your prescribed sounds, generated live in your browser."
+    },
+    "relaxing": {
+      "title": "Nature & Relaxing Sounds",
+      "sub": "A curated collection of 20 customizable nature and relaxation sounds.",
+      "relax_gentle_surf": {
+        "title": "Gentle Ocean Surf",
+        "goal": "Rhythmic, rolling waves with muted brightness for deep mental relaxation."
+      },
+      "relax_deep_swells": {
+        "title": "Deep Ocean Swells",
+        "goal": "Slow, sweeping ocean swells with minimal high frequencies to soothe sensory distress."
+      },
+      "relax_rolling_thunder": {
+        "title": "Rolling Thunder",
+        "goal": "Slow, ultra-low frequency rumbles mimicking distant thunder to ground your focus."
+      },
+      "relax_light_shower": {
+        "title": "Summer Rain Shower",
+        "goal": "Soft rainfall bed with sparse, delicate droplet transients to mimic a summer shower."
+      },
+      "relax_heavy_rain": {
+        "title": "Heavy Rainfall Bed",
+        "goal": "Dense rain texture with deep resonances, providing a protective acoustic cocoon."
+      },
+      "relax_tin_roof_rain": {
+        "title": "Rain on Tin Roof",
+        "goal": "Rain with crisp, resonant droplets hitting a metal roof, capturing attention gently."
+      },
+      "relax_campfire_crackle": {
+        "title": "Campfire Crackle",
+        "goal": "Sparse, crisp crackle transients over a warm, soothing pink noise bed."
+      },
+      "relax_soft_breeze": {
+        "title": "Soft Forest Breeze",
+        "goal": "Gentle pink wind blowing through forest canopies with very sparse bird chirps."
+      },
+      "relax_spring_birds": {
+        "title": "Spring Birdsong Ambience",
+        "goal": "Active, cheerful procedural birds chirping in a quiet woodland environment."
+      },
+      "relax_night_crickets": {
+        "title": "Night Wilderness (Crickets)",
+        "goal": "High-frequency crickets chirping steadily over a calm night wind."
+      },
+      "relax_fractal_major": {
+        "title": "Fractal Chimes (Major)",
+        "goal": "Aperiodic, self-similar major pentatonic bell sweeps that soothe without distracting."
+      },
+      "relax_fractal_minor": {
+        "title": "Fractal Chimes (Minor)",
+        "goal": "Quiet, reflective minor pentatonic bell sequences with a deep, spacious reverb wash."
+      },
+      "relax_singing_bowls": {
+        "title": "Tibetan Singing Bowls",
+        "goal": "Deeply resonant, sparse bells with a long wash of reverb for quiet contemplation."
+      },
+      "relax_binaural_theta": {
+        "title": "Binaural Meditation (Theta)",
+        "goal": "4.5 Hz theta beat on a warm 180 Hz carrier pad to guide deep relaxation (headphones required)."
+      },
+      "relax_binaural_delta": {
+        "title": "Binaural Sleep (Delta)",
+        "goal": "2.0 Hz delta beat on a deep 140 Hz carrier to promote deep sleep (headphones required)."
+      },
+      "relax_binaural_alpha": {
+        "title": "Binaural Focus (Alpha)",
+        "goal": "10 Hz alpha beat on a 220 Hz carrier to aid focused attention (headphones required)."
+      },
+      "relax_cosmic_drone": {
+        "title": "Deep Cosmic Drone",
+        "goal": "1.5 Hz delta beat on an ultra-deep 90 Hz carrier for sleep and deep trance (headphones required)."
+      },
+      "relax_paced_breathing": {
+        "title": "Paced Breathing Guide",
+        "goal": "4-4-4 balanced breathing guide with an audible envelope and spoken-rhythm cues."
+      },
+      "relax_brown_noise": {
+        "title": "Brownian Relaxation Noise",
+        "goal": "Soft, low-frequency dominated brown noise with high cuts for immediate tension relief."
+      },
+      "relax_pink_noise": {
+        "title": "Pink Relaxation Noise",
+        "goal": "Broadband pink noise with mild LFO modulation to gently enrich silent environments."
+      }
     }
   },
   "walkthrough": {
