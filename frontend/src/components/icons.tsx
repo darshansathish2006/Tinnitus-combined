@@ -198,6 +198,19 @@ export const IconSettings = (p: IconProps) => (
   </Base>
 );
 
+export const IconMeditate = (p: IconProps) => (
+  <Base {...p}>
+    {/* Person meditating in lotus posture */}
+    <circle cx="12" cy="5" r="2.25" />
+    <path d="M12 7.25v6" />
+    <path d="M7.5 11c1.5 2.5 3 3 4.5 3s3-.5 4.5-3" />
+    <path d="M7.5 11 5 14" />
+    <path d="M16.5 11 19 14" />
+    <path d="M4.5 19.5c2-2.5 4.5-3 7.5-3s5.5.5 7.5 3" />
+    <path d="M7 19.5h10" />
+  </Base>
+);
+
 /** Map used by the nav so route icons stay in one place. */
 export const NAV_ICONS: Record<string, (p: IconProps) => ReactElement> = {
   "/": IconChart,
@@ -205,6 +218,7 @@ export const NAV_ICONS: Record<string, (p: IconProps) => ReactElement> = {
   "/rehabilitation": IconWave,
   "/support": IconChat,
   "/community": IconUsers,
+  "/group-therapy": IconMeditate,
   // Not IconUser: a clinician scoped to a patient sees Caseload and Doctor
   // consultation in the same rail, and two identical glyphs there is a misread
   // waiting to happen. The calendar is what this screen is actually about.

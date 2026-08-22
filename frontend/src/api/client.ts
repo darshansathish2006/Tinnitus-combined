@@ -329,6 +329,57 @@ export interface CommunityResponse {
   online_count: number;
 }
 
+export interface GroupTherapySession {
+  id: number;
+  host_id: number;
+  host_name: string;
+  is_host: boolean;
+  title: string;
+  description: string;
+  meet_url: string;
+  invite_code: string;
+  max_participants: number;
+  participant_count: number;
+  is_participant: boolean;
+  status: "active" | "ended";
+  current_activity: "breathing" | "mood_checkin" | "reflection_prompt" | "gratitude_wall";
+  activity_data: Record<string, any>;
+  created_at: string;
+}
+
+export interface GroupTherapyMessage {
+  id: number;
+  session_id: number;
+  sender_id: number;
+  sender_name: string;
+  is_own_message: boolean;
+  content: string;
+  emoji_reaction: string;
+  message_type: "chat" | "feeling_emoji" | "system";
+  created_at: string;
+}
+
+export interface GroupTherapyActivityResponse {
+  id: number;
+  session_id: number;
+  user_id: number;
+  user_name: string;
+  is_own_response: boolean;
+  activity_type: string;
+  response_data: Record<string, any>;
+  created_at: string;
+}
+
+export interface GroupTherapyJoinRequest {
+  id: number;
+  session_id: number;
+  user_id: number;
+  user_name: string;
+  is_own_request: boolean;
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
+}
+
 export interface PatientProfile {
   id: number;
   mrn: string;
@@ -1060,6 +1111,56 @@ export const api = {
       request<{ messages: CommunityChatMessage[]; online_count: number }>("/api/communities/chat"),
     sendChat: (content: string) =>
       request<CommunityChatMessage>("/api/communities/chat", { method: "POST", body: { content } }),
+  },
+
+  groupTherapy: {
+    createSession: (data: { title: string; description?: string; meet_url?: string; max_participants?: number }) =>
+      request<GroupTherapySession>("/api/group-therapy/create", { method: "POST", body: data }),
+    joinSession: (inviteCode: string) =>
+      request<GroupTherapySession>("/api/group-therapy/join", { method: "POST", body: { invite_code: inviteCode } }),
+    listSessions: () =>
+      request<{ sessions: GroupTherapySession[] }>("/api/group-therapy/my-sessions"),
+    getSession: (sessionId: number) =>
+      request<{ session: GroupTherapySession; activity_responses: GroupTherapyActivityResponse[] }>(
+        `/api/group-therapy/${sessionId}`
+      ),
+    getChat: (sessionId: number) =>
+      request<{ messages: GroupTherapyMessage[]; participant_count: number }>(`/api/group-therapy/${sessionId}/chat`),
+    sendChat: (sessionId: number, content: string, emojiReaction: string = "", messageType: string = "chat") =>
+      request<GroupTherapyMessage>(`/api/group-therapy/${sessionId}/chat`, {
+        method: "POST",
+        body: { content, emoji_reaction: emojiReaction, message_type: messageType },
+      }),
+    submitActivity: (sessionId: number, activityType: string, responseData: Record<string, any>) =>
+      request<GroupTherapyActivityResponse>(`/api/group-therapy/${sessionId}/activity/submit`, {
+        method: "POST",
+        body: { activity_type: activityType, response_data: responseData },
+      }),
+    setActivity: (sessionId: number, activityType: string, activityData?: Record<string, any>) =>
+      request<GroupTherapySession>(`/api/group-therapy/${sessionId}/activity/set`, {
+        method: "POST",
+        body: { activity_type: activityType, activity_data: activityData },
+      }),
+    requestJoin: (inviteCode: string) =>
+      request<{ status: "approved" | "pending" | "rejected"; request_id?: number; session?: GroupTherapySession; detail?: string }>(
+        "/api/group-therapy/join-request",
+        { method: "POST", body: { invite_code: inviteCode } }
+      ),
+    checkJoinStatus: (requestId: number) =>
+      request<{ status: "pending" | "approved" | "rejected"; session?: GroupTherapySession; detail?: string }>(
+        `/api/group-therapy/join-request/${requestId}`
+      ),
+    listRequests: (sessionId: number) =>
+      request<{ requests: GroupTherapyJoinRequest[] }>(`/api/group-therapy/${sessionId}/requests`),
+    respondRequest: (sessionId: number, requestId: number, action: "approve" | "reject") =>
+      request<GroupTherapyJoinRequest>(`/api/group-therapy/${sessionId}/requests/${requestId}/respond`, {
+        method: "POST",
+        body: { action },
+      }),
+    leaveSession: (sessionId: number) =>
+      request<{ detail: string }>(`/api/group-therapy/${sessionId}/leave`, { method: "POST" }),
+    deleteSession: (sessionId: number) =>
+      request<{ detail: string }>(`/api/group-therapy/${sessionId}/delete`, { method: "DELETE" }),
   },
 
   clinician: {
