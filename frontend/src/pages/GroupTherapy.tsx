@@ -12,16 +12,23 @@
  * - 4 Interactive Group Therapeutic Activities (Sync Breathing, Mood Radar, Reflection Prompts, Gratitude Wall).
  */
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import {
   api,
   type GroupTherapySession,
   type GroupTherapyMessage,
   type GroupTherapyActivityResponse,
   type GroupTherapyJoinRequest,
+  type RehabProgramme as Programme,
+  type RehabActivity,
+  type Monitoring,
 } from "../api/client";
 import { useSession } from "../state/session";
-import { Loading } from "../components/ui";
+import { Loading, Panel, Fader, Meter, Readout, Chip, fmt } from "../components/ui";
+import { SpectrumBars } from "../components/charts";
+import { RELAXING_SOUNDS } from "../data/relaxingSounds";
+import { startTherapy, type TherapyBlock, type TherapyHandle } from "../audio/therapy";
+import { engine } from "../audio/engine";
 
 // Emoji Feelings Palette for Quick Reactions
 const FEELING_EMOJIS = [
@@ -70,13 +77,34 @@ export default function GroupTherapy() {
   const [activityResponses, setActivityResponses] = useState<GroupTherapyActivityResponse[]>([]);
 
   // Therapeutic Activities state
-  const [activeTab, setActiveTab] = useState<"breathing" | "mood_checkin" | "reflection_prompt" | "gratitude_wall">("breathing");
+  const [activeTab, setActiveTab] = useState<
+    "breathing" | "mood_checkin" | "reflection_prompt" | "gratitude_wall" | "sound_library" | "rehab_programme"
+  >("breathing");
   
   // Breathing exercise local animation & audio synthesizer state
   const [breathingPhase, setBreathingPhase] = useState<"Inhale" | "Hold" | "Exhale">("Inhale");
   const [breathingSeconds, setBreathingSeconds] = useState(4);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [soundType, setSoundType] = useState<"notch" | "pink" | "white">("notch");
+
+  // Nature & Relaxing Sounds Sound Therapy State (Aakash's 20 sounds + Web Audio Engine)
+  const [selectedSound, setSelectedSound] = useState<TherapyBlock>(RELAXING_SOUNDS[0]);
+  const [soundPhase, setSoundPhase] = useState<"idle" | "pre" | "playing" | "post">("idle");
+  const [soundLevelDbfs, setSoundLevelDbfs] = useState(-34);
+  const [preVas, setPreVas] = useState(5);
+  const [postVas, setPostVas] = useState(4);
+  const [soundElapsed, setSoundElapsed] = useState(0);
+  const [soundStatus, setSoundStatus] = useState("");
+  const [spectrumData, setSpectrumData] = useState<Uint8Array | null>(null);
+  const soundHandleRef = useRef<TherapyHandle | null>(null);
+  const soundStartedAt = useRef(0);
+  const soundFrameRef = useRef(0);
+
+  // Rehab Programme & Monitoring State
+  const [rehabData, setRehabData] = useState<Programme | null>(null);
+  const [monitoringData, setMonitoringData] = useState<Monitoring | null>(null);
+  const [loadingRehab, setLoadingRehab] = useState(false);
+  const [rehabBusy, setRehabBusy] = useState<Set<string>>(new Set());
 
   // Mood Check-in state
   const [distressRating, setDistressRating] = useState<number>(5);
@@ -93,6 +121,120 @@ export default function GroupTherapy() {
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const noiseNodeRef = useRef<AudioNode | null>(null);
+
+  const stopSoundPlayback = useCallback(() => {
+    soundHandleRef.current?.stop(1.2);
+    soundHandleRef.current = null;
+    cancelAnimationFrame(soundFrameRef.current);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      stopSoundPlayback();
+      engine.stopAll(0.3);
+    };
+  }, [stopSoundPlayback]);
+
+  useEffect(() => {
+    if (soundPhase !== "playing") return;
+    const tick = () => {
+      setSoundElapsed((performance.now() - soundStartedAt.current) / 1000);
+      const buffer = new Uint8Array(1024);
+      if (engine.spectrum(buffer)) setSpectrumData(buffer);
+      const text = soundHandleRef.current?.status?.();
+      if (text) setSoundStatus(text);
+      soundFrameRef.current = requestAnimationFrame(tick);
+    };
+    soundFrameRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(soundFrameRef.current);
+  }, [soundPhase]);
+
+  async function startSoundSession() {
+    stopSoundPlayback();
+    try {
+      await engine.resume();
+      soundHandleRef.current = startTherapy(selectedSound, soundLevelDbfs);
+      soundStartedAt.current = performance.now();
+      setSoundPhase("playing");
+      setSoundStatus(soundHandleRef.current.status?.() ?? "");
+    } catch (err: any) {
+      stopSoundPlayback();
+      setSoundPhase("pre");
+      toast(err.message || "Failed to start sound therapy session", "crit");
+    }
+  }
+
+  function finishSoundSession() {
+    stopSoundPlayback();
+    setPostVas(Math.max(0, preVas - 1));
+    setSoundPhase("post");
+  }
+
+  async function logSoundRelief(completed: boolean) {
+    try {
+      await api.therapy.logSession({
+        modality: selectedSound.modality,
+        planned_seconds: selectedSound.minutes * 60,
+        actual_seconds: Math.round(soundElapsed),
+        completed,
+        volume_db: soundLevelDbfs,
+        pre_vas_loudness: preVas,
+        post_vas_loudness: postVas,
+        params: { engine: selectedSound.engine },
+      });
+      toast(`Logged therapy session! Pre VAS: ${preVas}, Post VAS: ${postVas}`, "ok");
+      loadRehabProgress();
+    } catch (err: any) {
+      toast(err.message || "Failed to log session relief", "crit");
+    }
+    setSoundPhase("idle");
+    setSoundElapsed(0);
+  }
+
+  const loadRehabProgress = useCallback(async () => {
+    setLoadingRehab(true);
+    try {
+      const [prog, mon] = await Promise.all([
+        api.rehab.programme().catch(() => null),
+        api.monitoring.get().catch(() => null),
+      ]);
+      setRehabData(prog);
+      setMonitoringData(mon);
+    } catch {
+      // silent load
+    } finally {
+      setLoadingRehab(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeSession) {
+      loadRehabProgress();
+    }
+  }, [activeSession?.id, loadRehabProgress]);
+
+  async function toggleRehabActivity(activity: RehabActivity) {
+    if (rehabBusy.has(activity.key)) return;
+    setRehabBusy((prev) => new Set(prev).add(activity.key));
+    const isDone = rehabData?.progress.completed_today.includes(activity.key);
+    try {
+      if (isDone) {
+        await api.rehab.undo(activity.key);
+      } else {
+        await api.rehab.complete(activity.key, activity.minutes);
+      }
+      await loadRehabProgress();
+      toast(`Updated activity: ${activity.key}`, "info");
+    } catch (err: any) {
+      toast(err.message || "Failed to update activity", "crit");
+    } finally {
+      setRehabBusy((prev) => {
+        const next = new Set(prev);
+        next.delete(activity.key);
+        return next;
+      });
+    }
+  }
 
   // Fetch hub sessions on mount
   useEffect(() => {
@@ -977,7 +1119,7 @@ export default function GroupTherapy() {
               </div>
 
               {/* Activity Tabs */}
-              <div className="row row--tight" style={{ borderBottom: "1px solid var(--border)", paddingBottom: "var(--s2)" }}>
+              <div className="row row--tight row--wrap" style={{ borderBottom: "1px solid var(--border)", paddingBottom: "var(--s2)", gap: "6px" }}>
                 <button
                   type="button"
                   className={`btn ${activeTab === "breathing" ? "btn--primary" : "btn--ghost"}`}
@@ -1009,6 +1151,22 @@ export default function GroupTherapy() {
                   style={{ fontSize: "var(--fs-xs)" }}
                 >
                   💌 4. Gratitude Wall
+                </button>
+                <button
+                  type="button"
+                  className={`btn ${activeTab === "sound_library" ? "btn--primary" : "btn--ghost"}`}
+                  onClick={() => setActiveTab("sound_library")}
+                  style={{ fontSize: "var(--fs-xs)" }}
+                >
+                  🎵 5. Sound Therapy
+                </button>
+                <button
+                  type="button"
+                  className={`btn ${activeTab === "rehab_programme" ? "btn--primary" : "btn--ghost"}`}
+                  onClick={() => setActiveTab("rehab_programme")}
+                  style={{ fontSize: "var(--fs-xs)" }}
+                >
+                  📈 6. Rehab Progress
                 </button>
               </div>
 
@@ -1245,6 +1403,272 @@ export default function GroupTherapy() {
                         })
                     )}
                   </div>
+                </div>
+              )}
+
+              {/* TAB 5: GROUP NATURE & RELAXING SOUND THERAPY (AAKASH'S 20 SOUNDS + WEB AUDIO ENGINE) */}
+              {activeTab === "sound_library" && (
+                <div className="stack stack-4">
+                  <div className="panel stack stack-3" style={{ background: "rgba(15, 23, 42, 0.8)", border: "1px solid rgba(148, 163, 184, 0.3)" }}>
+                    <div className="row row--between">
+                      <div>
+                        <h3 style={{ margin: 0, color: "#fff" }}>Group Nature & Relaxing Soundscapes</h3>
+                        <p className="meta" style={{ color: "#cbd5e1" }}>
+                          20 live synthesized soundscapes for acoustic masking and relaxation during group sessions.
+                        </p>
+                      </div>
+                      <Chip tone="info">20 Preset Sounds</Chip>
+                    </div>
+
+                    {/* Sound Selector Dropdown */}
+                    <div className="stack stack-2">
+                      <label className="meta" style={{ color: "#fff", fontWeight: 600 }}>Select Relaxing Soundscape:</label>
+                      <select
+                        value={selectedSound.id}
+                        onChange={(e) => {
+                          const found = RELAXING_SOUNDS.find((s) => s.id === e.target.value);
+                          if (found) setSelectedSound(found);
+                        }}
+                        className="input"
+                        style={{
+                          width: "100%",
+                          background: "rgba(15, 23, 42, 0.95)",
+                          color: "#ffffff",
+                          border: "1px solid rgba(148, 163, 184, 0.4)",
+                          padding: "10px",
+                        }}
+                      >
+                        {RELAXING_SOUNDS.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.title} ({s.engine} · {s.minutes}m)
+                          </option>
+                        ))}
+                      </select>
+                      <p className="meta" style={{ color: "#94a3b8", fontSize: "var(--fs-xs)" }}>
+                        {selectedSound.goal}
+                      </p>
+                    </div>
+
+                    {/* Audio Player Controls */}
+                    <div className="panel stack stack-3" style={{ background: "rgba(30, 41, 59, 0.7)", borderColor: "rgba(99, 102, 241, 0.3)" }}>
+                      <div className="row row--between">
+                        <strong style={{ color: "#fff" }}>{selectedSound.title}</strong>
+                        <Chip tone={soundPhase === "playing" ? "signal" : "ghost"}>
+                          {soundPhase === "playing" ? "Playing Live" : "Idle"}
+                        </Chip>
+                      </div>
+
+                      {soundPhase === "playing" && (
+                        <div className="stack stack-3">
+                          <div className="row row--between">
+                            <Readout
+                              label="Elapsed Time"
+                              value={`${Math.floor(soundElapsed / 60)}:${String(Math.floor(soundElapsed % 60)).padStart(2, "0")}`}
+                              size="sm"
+                              tone="signal"
+                            />
+                            <Readout label="Target" value={selectedSound.minutes} unit="min" size="sm" />
+                          </div>
+
+                          <div>
+                            <span className="label" style={{ color: "#cbd5e1", marginBottom: "4px", display: "block" }}>
+                              Live Spectrum Output
+                            </span>
+                            <SpectrumBars data={spectrumData} height={50} bars={40} />
+                          </div>
+
+                          <Fader
+                            label="Volume (dBFS)"
+                            value={soundLevelDbfs}
+                            min={-60}
+                            max={-8}
+                            step={1}
+                            unit="dBFS"
+                            onChange={(val) => {
+                              setSoundLevelDbfs(val);
+                              soundHandleRef.current?.setLevelDb(val, 0.25);
+                            }}
+                            lowLabel="Quieter"
+                            highLabel="Louder"
+                          />
+                        </div>
+                      )}
+
+                      {/* Pre / Post Rating & Play Buttons */}
+                      {soundPhase === "idle" && (
+                        <div className="stack stack-2">
+                          <div className="row row--between">
+                            <span className="meta" style={{ color: "#e2e8f0" }}>Pre-Session Loudness (0 - 10):</span>
+                            <span className="mono" style={{ color: "#38bdf8", fontWeight: "bold" }}>{preVas} / 10</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={10}
+                            step={0.5}
+                            value={preVas}
+                            onChange={(e) => setPreVas(Number(e.target.value))}
+                            style={{ width: "100%", accentColor: "var(--accent)" }}
+                          />
+                          <button
+                            type="button"
+                            className="btn btn--primary"
+                            onClick={startSoundSession}
+                            style={{ fontWeight: "bold", marginTop: "8px" }}
+                          >
+                            ▶ Start Group Sound Session ({selectedSound.minutes}m)
+                          </button>
+                        </div>
+                      )}
+
+                      {soundPhase === "playing" && (
+                        <div className="row row--between" style={{ marginTop: "8px" }}>
+                          <button
+                            type="button"
+                            className="btn btn--outline"
+                            onClick={finishSoundSession}
+                            style={{ borderColor: "#f87171", color: "#fca5a5" }}
+                          >
+                            ⏹ Finish Session & Rate Relief
+                          </button>
+                        </div>
+                      )}
+
+                      {soundPhase === "post" && (
+                        <div className="stack stack-3" style={{ background: "rgba(15, 23, 42, 0.9)", padding: "12px", borderRadius: "8px" }}>
+                          <h4 style={{ color: "#fff", margin: 0 }}>Rate Post-Session Tinnitus Loudness</h4>
+                          <div className="row row--between">
+                            <span className="meta" style={{ color: "#e2e8f0" }}>Post-Session Loudness:</span>
+                            <span className="mono" style={{ color: "#10b981", fontWeight: "bold" }}>{postVas} / 10</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={10}
+                            step={0.5}
+                            value={postVas}
+                            onChange={(e) => setPostVas(Number(e.target.value))}
+                            style={{ width: "100%", accentColor: "#10b981" }}
+                          />
+                          <div className="row row--between">
+                            <button
+                              type="button"
+                              className="btn btn--ghost"
+                              onClick={() => setSoundPhase("idle")}
+                            >
+                              Skip Rating
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn--primary"
+                              onClick={() => logSoundRelief(true)}
+                              style={{ background: "#10b981", borderColor: "#059669", fontWeight: "bold" }}
+                            >
+                              ✓ Save Session & Log Relief
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 6: REHABILITATION PROGRAMME PROGRESS & CHECKLIST */}
+              {activeTab === "rehab_programme" && (
+                <div className="stack stack-4">
+                  {loadingRehab ? (
+                    <Loading label="Loading rehabilitation programme..." />
+                  ) : !rehabData ? (
+                    <Panel tone="sunken" tight>
+                      <p className="meta">No active rehabilitation programme found. Complete your initial assessment to generate a custom recovery plan.</p>
+                    </Panel>
+                  ) : (
+                    <div className="stack stack-4">
+                      {/* Progress Counters */}
+                      <div className="grid grid-3" style={{ gap: "8px" }}>
+                        <Panel tight style={{ background: "rgba(15,23,42,0.8)" }}>
+                          <Readout
+                            label="Today's Tasks"
+                            value={`${rehabData.progress.completed_today.length}/${rehabData.today.length}`}
+                            size="sm"
+                            tone={rehabData.progress.completed_today.length === rehabData.today.length ? "ok" : "signal"}
+                          />
+                        </Panel>
+                        <Panel tight style={{ background: "rgba(15,23,42,0.8)" }}>
+                          <Readout
+                            label="Day Streak"
+                            value={rehabData.progress.streak_days}
+                            size="sm"
+                            tone={rehabData.progress.streak_days >= 3 ? "ok" : "data"}
+                          />
+                        </Panel>
+                        <Panel tight style={{ background: "rgba(15,23,42,0.8)" }}>
+                          <Readout
+                            label="Weekly %"
+                            value={fmt.pct100(rehabData.progress.week_completion_pct, 0)}
+                            size="sm"
+                            tone={rehabData.progress.week_completion_pct >= 70 ? "ok" : "data"}
+                          />
+                        </Panel>
+                      </div>
+
+                      {/* Overall Completion Meter */}
+                      <div className="stack stack-1">
+                        <div className="row row--between meta">
+                          <span style={{ color: "#cbd5e1" }}>Overall Programme Completion:</span>
+                          <strong style={{ color: "#fff" }}>{fmt.pct100(rehabData.progress.overall_completion_pct, 0)}</strong>
+                        </div>
+                        <Meter value={rehabData.progress.overall_completion_pct} max={100} tone="ok" />
+                      </div>
+
+                      {/* Today's Checklist */}
+                      <div className="panel stack stack-3" style={{ background: "rgba(15,23,42,0.8)" }}>
+                        <h4 style={{ color: "#fff", margin: 0 }}>Today's Assigned Rehab Checklist</h4>
+
+                        <ul className="stack stack-2" style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                          {rehabData.today.map((activity) => {
+                            const isDone = rehabData.progress.completed_today.includes(activity.key);
+                            return (
+                              <li
+                                key={activity.key}
+                                className="row row--between panel"
+                                style={{
+                                  background: isDone ? "rgba(16, 185, 129, 0.15)" : "rgba(30, 41, 59, 0.7)",
+                                  borderColor: isDone ? "rgba(16, 185, 129, 0.4)" : "rgba(148, 163, 184, 0.2)",
+                                  padding: "8px 12px",
+                                }}
+                              >
+                                <div className="stack stack-1" style={{ minWidth: 0 }}>
+                                  <strong style={{ fontSize: "var(--fs-small)", color: "#fff" }}>
+                                    {activity.key.replace(/_/g, " ").toUpperCase()} ({activity.minutes}m)
+                                  </strong>
+                                  <span className="meta" style={{ fontSize: "var(--fs-micro)", color: "#cbd5e1" }}>
+                                    Slot: {activity.slot} {activity.because ? `· ${activity.because}` : ""}
+                                  </span>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  className={`btn btn--sm ${isDone ? "btn--primary" : "btn--outline"}`}
+                                  disabled={rehabBusy.has(activity.key)}
+                                  onClick={() => toggleRehabActivity(activity)}
+                                  style={{
+                                    background: isDone ? "#10b981" : "transparent",
+                                    borderColor: isDone ? "#059669" : "rgba(148, 163, 184, 0.4)",
+                                    color: "#fff",
+                                    fontWeight: "bold",
+                                  }}
+                                >
+                                  {isDone ? "✓ Done" : "Mark Done"}
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

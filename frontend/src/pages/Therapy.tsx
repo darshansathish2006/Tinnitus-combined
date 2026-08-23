@@ -962,12 +962,12 @@ function SpectrumModal({
     () =>
       open && notchHz
         ? api.therapy.spectrum({
-            notch_hz: notchHz,
-            tinnitus_hz: pitchHz,
-            width_octaves: width,
-            depth_db: 40,
-            noise_color: String(notchBlock?.params.noiseColor ?? "pink"),
-          })
+          notch_hz: notchHz,
+          tinnitus_hz: pitchHz,
+          width_octaves: width,
+          depth_db: 40,
+          noise_color: String(notchBlock?.params.noiseColor ?? "pink"),
+        })
         : Promise.resolve(null),
     [open, notchHz, width]
   );
