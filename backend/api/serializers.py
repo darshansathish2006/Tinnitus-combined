@@ -60,6 +60,15 @@ class RegisterSerializer(serializers.Serializer):
         choices=["male", "female", "other", "prefer_not_to_say"], required=False, allow_null=True
     )
 
+    def to_internal_value(self, data):
+        if isinstance(data, dict):
+            data = data.copy()
+            if data.get("date_of_birth") == "":
+                data["date_of_birth"] = None
+            if data.get("sex") == "":
+                data["sex"] = None
+        return super().to_internal_value(data)
+
     def validate_email(self, value: str) -> str:
         if User.objects.filter(email=value.lower()).exists():
             raise serializers.ValidationError("An account with that email already exists.")

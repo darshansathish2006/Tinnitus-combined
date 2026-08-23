@@ -94,7 +94,7 @@ export default function GroupTherapy() {
   const [preVas, setPreVas] = useState(5);
   const [postVas, setPostVas] = useState(4);
   const [soundElapsed, setSoundElapsed] = useState(0);
-  const [soundStatus, setSoundStatus] = useState("");
+  const [_soundStatus, setSoundStatus] = useState("");
   const [spectrumData, setSpectrumData] = useState<Uint8Array | null>(null);
   const soundHandleRef = useRef<TherapyHandle | null>(null);
   const soundStartedAt = useRef(0);
@@ -102,7 +102,7 @@ export default function GroupTherapy() {
 
   // Rehab Programme & Monitoring State
   const [rehabData, setRehabData] = useState<Programme | null>(null);
-  const [monitoringData, setMonitoringData] = useState<Monitoring | null>(null);
+  const [_monitoringData, setMonitoringData] = useState<Monitoring | null>(null);
   const [loadingRehab, setLoadingRehab] = useState(false);
   const [rehabBusy, setRehabBusy] = useState<Set<string>>(new Set());
 
@@ -720,21 +720,13 @@ export default function GroupTherapy() {
           {/* Active Sessions List */}
           <div>
             <h2>Active Group Therapy Rooms</h2>
-            <p className="meta">Join an ongoing patient therapy room or share permanent invite codes with others.</p>
+            <p className="meta">Join an ongoing patient therapy room or request access from the host.</p>
 
             {loadingHub ? (
               <Loading label="Loading group therapy sessions..." />
             ) : sessions.length === 0 ? (
               <div className="panel" style={{ textAlign: "center", padding: "var(--s6)" }}>
-                <p className="meta">No active group sessions right now. Be the first to create one!</p>
-                <button
-                  type="button"
-                  className="btn btn--primary"
-                  style={{ marginTop: "var(--s3)" }}
-                  onClick={() => setShowCreateModal(true)}
-                >
-                  Create Group Session
-                </button>
+                <p className="meta">No active group sessions right now.</p>
               </div>
             ) : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "var(--s4)", marginTop: "var(--s3)" }}>
@@ -747,18 +739,6 @@ export default function GroupTherapy() {
 
                     <h3 style={{ margin: 0 }}>{sess.title}</h3>
                     {sess.description && <p className="meta" style={{ fontSize: "var(--fs-small)" }}>{sess.description}</p>}
-
-                    <div className="row row--between" style={{ background: "rgba(255,255,255,0.03)", padding: "var(--s2) var(--s3)", borderRadius: "var(--radius-sm)" }}>
-                      <span className="meta">Invite Code: <strong>{sess.invite_code}</strong></span>
-                      <button
-                        type="button"
-                        className="btn btn--sm"
-                        onClick={() => copyInviteCode(sess.invite_code)}
-                        style={{ background: "#f8fafc", color: "#0f172a", fontWeight: "700", border: "1px solid #cbd5e1" }}
-                      >
-                        Copy Code ({sess.invite_code})
-                      </button>
-                    </div>
 
                     <div className="row row--between" style={{ marginTop: "var(--s2)" }}>
                       <span className="meta">Host: {sess.host_name}</span>
@@ -992,14 +972,14 @@ export default function GroupTherapy() {
                             alignSelf: msg.is_own_message ? "flex-end" : "flex-start",
                             maxWidth: "85%",
                             background: msg.is_own_message
-                              ? "linear-gradient(135deg, #2563eb 0%, #0284c7 100%)"
+                              ? "var(--ink)"
                               : "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)",
                             color: "#ffffff",
                             border: msg.is_own_message
-                              ? "1px solid rgba(147, 197, 253, 0.4)"
+                              ? "1px solid rgba(255, 255, 255, 0.2)"
                               : "1px solid rgba(148, 163, 184, 0.25)",
                             boxShadow: msg.is_own_message
-                              ? "0 3px 12px rgba(37, 99, 235, 0.3)"
+                              ? "0 3px 12px rgba(0, 0, 0, 0.3)"
                               : "0 2px 8px rgba(0, 0, 0, 0.2)",
                             padding: "var(--s2) var(--s3)",
                             borderRadius: "var(--radius-md)",
@@ -1008,10 +988,10 @@ export default function GroupTherapy() {
                           }}
                         >
                           <div className="row row--between" style={{ gap: "var(--s3)", marginBottom: "2px" }}>
-                            <strong style={{ fontSize: "var(--fs-xs)", color: msg.is_own_message ? "#e0f2fe" : "#38bdf8" }}>
+                            <strong style={{ fontSize: "var(--fs-xs)", color: msg.is_own_message ? "#ffffff" : "#38bdf8" }}>
                               {msg.is_own_message ? "You" : msg.sender_name}
                             </strong>
-                            <span className="meta" style={{ fontSize: "10px", color: msg.is_own_message ? "#bae6fd" : "#94a3b8" }}>
+                            <span className="meta" style={{ fontSize: "10px", color: msg.is_own_message ? "rgba(255, 255, 255, 0.7)" : "#94a3b8" }}>
                               {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                             </span>
                           </div>
