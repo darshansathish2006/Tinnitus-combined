@@ -26,6 +26,10 @@ from .models import (
     CommunityPost,
     DiaryEntry,
     Ear,
+    GroupTherapySession,
+    GroupTherapyMessage,
+    GroupTherapyActivityResponse,
+    GroupTherapyJoinRequest,
     MedicationReminder,
     Patient,
     TherapyPrescription,
@@ -55,6 +59,15 @@ class RegisterSerializer(serializers.Serializer):
     sex = serializers.ChoiceField(
         choices=["male", "female", "other", "prefer_not_to_say"], required=False, allow_null=True
     )
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict):
+            data = data.copy()
+            if data.get("date_of_birth") == "":
+                data["date_of_birth"] = None
+            if data.get("sex") == "":
+                data["sex"] = None
+        return super().to_internal_value(data)
 
     def validate_email(self, value: str) -> str:
         if User.objects.filter(email=value.lower()).exists():
@@ -535,5 +548,136 @@ class CommunityChatMessageSerializer(serializers.ModelSerializer):
                 else:
                     out.append(m.full_name)
         return out
+
+
+# --------------------------------------------------------------------------- #
+# Group Therapy
+# --------------------------------------------------------------------------- #
+class GroupTherapySessionSerializer(serializers.ModelSerializer):
+    host_name = serializers.SerializerMethodField()
+    is_host = serializers.SerializerMethodField()
+    participant_count = serializers.SerializerMethodField()
+    is_participant = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GroupTherapySession
+        fields = [
+            "id",
+            "host_id",
+            "host_name",
+            "is_host",
+            "title",
+            "description",
+            "meet_url",
+            "invite_code",
+            "max_participants",
+            "participant_count",
+            "is_participant",
+            "status",
+            "current_activity",
+            "activity_data",
+            "created_at",
+        ]
+
+    def get_host_name(self, obj: GroupTherapySession) -> str:
+        return obj.host.full_name or "Patient Host"
+
+    def get_is_host(self, obj: GroupTherapySession) -> bool:
+        request = self.context.get("request")
+        if request and getattr(request, "user", None) and request.user.is_authenticated:
+            return obj.host_id == request.user.id
+        return False
+
+    def get_participant_count(self, obj: GroupTherapySession) -> int:
+        return obj.participants.count()
+
+    def get_is_participant(self, obj: GroupTherapySession) -> bool:
+        request = self.context.get("request")
+        if request and getattr(request, "user", None) and request.user.is_authenticated:
+            return obj.participants.filter(id=request.user.id).exists()
+        return False
+
+
+class GroupTherapyMessageSerializer(serializers.ModelSerializer):
+    sender_name = serializers.SerializerMethodField()
+    is_own_message = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GroupTherapyMessage
+        fields = [
+            "id",
+            "session_id",
+            "sender_id",
+            "sender_name",
+            "is_own_message",
+            "content",
+            "emoji_reaction",
+            "message_type",
+            "created_at",
+        ]
+
+    def get_sender_name(self, obj: GroupTherapyMessage) -> str:
+        return obj.sender.full_name or "Participant"
+
+    def get_is_own_message(self, obj: GroupTherapyMessage) -> bool:
+        request = self.context.get("request")
+        if request and getattr(request, "user", None) and request.user.is_authenticated:
+            return obj.sender_id == request.user.id
+        return False
+
+
+class GroupTherapyActivityResponseSerializer(serializers.ModelSerializer):
+    user_name = serializers.SerializerMethodField()
+    is_own_response = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GroupTherapyActivityResponse
+        fields = [
+            "id",
+            "session_id",
+            "user_id",
+            "user_name",
+            "is_own_response",
+            "activity_type",
+            "response_data",
+            "created_at",
+        ]
+
+    def get_user_name(self, obj: GroupTherapyActivityResponse) -> str:
+        return obj.user.full_name or "Participant"
+
+    def get_is_own_response(self, obj: GroupTherapyActivityResponse) -> bool:
+        request = self.context.get("request")
+        if request and getattr(request, "user", None) and request.user.is_authenticated:
+            return obj.user_id == request.user.id
+        return False
+
+
+class GroupTherapyJoinRequestSerializer(serializers.ModelSerializer):
+    user_name = serializers.SerializerMethodField()
+    is_own_request = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GroupTherapyJoinRequest
+        fields = [
+            "id",
+            "session_id",
+            "user_id",
+            "user_name",
+            "is_own_request",
+            "status",
+            "created_at",
+        ]
+
+    def get_user_name(self, obj: GroupTherapyJoinRequest) -> str:
+        return obj.user.full_name or "Patient Guest"
+
+    def get_is_own_request(self, obj: GroupTherapyJoinRequest) -> bool:
+        request = self.context.get("request")
+        if request and getattr(request, "user", None) and request.user.is_authenticated:
+            return obj.user_id == request.user.id
+        return False
+
+
 
 

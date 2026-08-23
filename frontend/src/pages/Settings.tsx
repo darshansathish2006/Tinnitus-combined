@@ -1,14 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { useSession } from "../state/session";
 import { api, UserLocation, Community } from "../api/client";
-import { Panel, ThemeToggle } from "../components/ui";
+import { Panel, ThemeToggle, Loading } from "../components/ui";
 import { LanguageSelector } from "../components/LanguageSelector";
 import { IconUser, IconGlobe, IconClose } from "../components/icons";
 
 export default function Settings() {
-  const { t } = useTranslation();
   const navigate = useNavigate();
   const session = useSession((s) => s.session);
   const hydrate = useSession((s) => s.hydrate);
@@ -94,6 +92,10 @@ export default function Settings() {
       setSavingLocation(false);
     }
   };
+
+  if (loading) {
+    return <Loading label="Loading settings..." />;
+  }
 
   return (
     <div className="wrap stack stack-6">

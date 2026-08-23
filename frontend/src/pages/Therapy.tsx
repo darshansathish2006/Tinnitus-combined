@@ -36,6 +36,7 @@ import { IconPlay, IconStop, IconVolume } from "../components/icons";
 import { RehabProgramme } from "../components/RehabProgramme";
 import { DailyMonitoring } from "../components/DailyMonitoring";
 import { ChartLegend, SpectrumBars, SpectrumChart } from "../components/charts";
+import { RELAXING_SOUNDS } from "../data/relaxingSounds";
 
 /**
  * Schedule slots are backend enum values; the label is looked up under
@@ -58,6 +59,19 @@ const FAMILY_TONE: Record<string, "signal" | "data" | "ok" | "warn" | "info"> = 
 };
 
 type Phase = "idle" | "pre" | "playing" | "post";
+
+function engineLabel(engine: string): string {
+  switch (engine) {
+    case "oceanWaves": return "🌊 Ocean";
+    case "rain": return "🌧️ Rain / Fire";
+    case "forest": return "🌲 Forest / Night";
+    case "fractalTones": return "🔔 Chimes / Bowls";
+    case "binaural": return "🎧 Binaural";
+    case "breathingPacer": return "🫁 Breathing";
+    case "shapedNoise": return "🔊 Comfort Noise";
+    default: return "🔊 Sound";
+  }
+}
 
 /**
  * The Rehabilitation screen.
@@ -798,6 +812,49 @@ export default function Rehabilitation() {
             </Panel>
           ))}
 
+          <Panel
+            title={
+              <div className="stack stack-1">
+                <h3 className="panel__title">{t("rehab.relaxing.title", { defaultValue: "Nature & Relaxing Sounds" })}</h3>
+                <p className="meta" style={{ fontWeight: "normal", textTransform: "none", color: "var(--ink-3)", marginTop: "2px" }}>
+                  {t("rehab.relaxing.sub", { defaultValue: "A curated collection of 20 nature and relaxation sounds generated live." })}
+                </p>
+              </div>
+            }
+            bracketed
+          >
+            <div className="grid grid-auto" style={{ ["--min" as string]: "320px" }}>
+              {RELAXING_SOUNDS.map((item) => {
+                const localizedTitle = t(`rehab.relaxing.${item.id}.title`, { defaultValue: item.title });
+                const localizedGoal = t(`rehab.relaxing.${item.id}.goal`, { defaultValue: item.goal });
+                return (
+                  <Panel key={item.id} tone="sunken" tight>
+                    <div className="stack stack-3">
+                      <div className="row row--between row--top">
+                        <div className="stack stack-1" style={{ minWidth: 0 }}>
+                          <strong style={{ fontSize: "var(--fs-small)" }}>{localizedTitle}</strong>
+                          <span className="meta">{localizedGoal}</span>
+                        </div>
+                        <div className="stack stack-1" style={{ alignItems: "flex-end", gap: "4px" }}>
+                          <Chip tone="ghost">{engineLabel(item.engine)}</Chip>
+                          <Chip tone="info">{item.minutes}m</Chip>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn--primary btn--sm btn--block"
+                        onClick={() => beginBlock(item)}
+                      >
+                        <IconPlay size={13} />
+                        {t("therapy.block.start", { defaultValue: "Start Session" })}
+                      </button>
+                    </div>
+                  </Panel>
+                );
+              })}
+            </div>
+          </Panel>
+
           <Panel title={t("therapy.why")} bracketed>
             <ol className="stack stack-2" style={{ paddingLeft: "var(--s5)", fontSize: "var(--fs-small)" }}>
               {plan.rationale.map((reason, i) => (
@@ -905,12 +962,12 @@ function SpectrumModal({
     () =>
       open && notchHz
         ? api.therapy.spectrum({
-            notch_hz: notchHz,
-            tinnitus_hz: pitchHz,
-            width_octaves: width,
-            depth_db: 40,
-            noise_color: String(notchBlock?.params.noiseColor ?? "pink"),
-          })
+          notch_hz: notchHz,
+          tinnitus_hz: pitchHz,
+          width_octaves: width,
+          depth_db: 40,
+          noise_color: String(notchBlock?.params.noiseColor ?? "pink"),
+        })
         : Promise.resolve(null),
     [open, notchHz, width]
   );

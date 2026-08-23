@@ -65,6 +65,10 @@ from .models import (
     CommunityChatMessage,
     CommunityPost,
     DiaryEntry,
+    GroupTherapySession,
+    GroupTherapyMessage,
+    GroupTherapyActivityResponse,
+    GroupTherapyJoinRequest,
     MedicationReminder,
     Patient,
     DailyCheckIn,
@@ -95,6 +99,10 @@ from .serializers import (
     CommunityPostSerializer,
     CommunitySerializer,
     DiarySerializer,
+    GroupTherapySessionSerializer,
+    GroupTherapyMessageSerializer,
+    GroupTherapyActivityResponseSerializer,
+    GroupTherapyJoinRequestSerializer,
     LocationUpdateSerializer,
     LoginSerializer,
     MedicationReminderSerializer,
@@ -3487,3 +3495,353 @@ def index(request):
             ],
         }
     )
+
+
+# --------------------------------------------------------------------------- #
+# Group Therapy Views
+# --------------------------------------------------------------------------- #
+import secrets
+import string
+
+def _generate_invite_code() -> str:
+    chars = string.ascii_uppercase + string.digits
+    for _ in range(20):
+        code = f"GT-{''.join(secrets.choice(chars) for _ in range(5))}"
+        if not GroupTherapySession.objects.filter(invite_code=code).exists():
+            return code
+    return f"GT-{timezone.now().strftime('%M%S')}"
+
+
+@api_view(["POST"])
+def create_group_session(request):
+    title = request.data.get("title", "").strip()
+    if not title:
+        return Response({"detail": "Session title is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    description = request.data.get("description", "").strip()
+    meet_url = request.data.get("meet_url", "").strip()
+    max_participants = int(request.data.get("max_participants", 10))
+
+    invite_code = _generate_invite_code()
+
+    session = GroupTherapySession.objects.create(
+        host=request.user,
+        title=title,
+        description=description,
+        meet_url=meet_url,
+        invite_code=invite_code,
+        max_participants=max_participants,
+        current_activity=GroupTherapySession.Activity.BREATHING,
+        activity_data={
+            "prompt": "Share one sound therapy technique that helped ease your tinnitus today.",
+            "soundscape": "Notch Noise & Ocean Waves",
+        },
+    )
+    session.participants.add(request.user)
+
+    # Initial system welcome message
+    GroupTherapyMessage.objects.create(
+        session=session,
+        sender=request.user,
+        content=f"Group therapy session '{title}' created. Invite code: {invite_code}",
+        message_type=GroupTherapyMessage.MessageType.SYSTEM,
+    )
+
+    ser = GroupTherapySessionSerializer(session, context={"request": request})
+    return Response(ser.data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+def join_group_session_by_code(request):
+    code = request.data.get("invite_code", "").strip().upper()
+    if not code:
+        return Response({"detail": "Invite code is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    session = GroupTherapySession.objects.filter(invite_code__iexact=code, status=GroupTherapySession.Status.ACTIVE).first()
+    if not session:
+        return Response({"detail": "Active group session with this code was not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if session.participants.count() >= session.max_participants and not session.participants.filter(id=request.user.id).exists():
+        return Response({"detail": "Session is at maximum capacity."}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not session.participants.filter(id=request.user.id).exists():
+        session.participants.add(request.user)
+        GroupTherapyMessage.objects.create(
+            session=session,
+            sender=request.user,
+            content=f"{request.user.full_name} joined the therapy session.",
+            message_type=GroupTherapyMessage.MessageType.SYSTEM,
+        )
+
+    ser = GroupTherapySessionSerializer(session, context={"request": request})
+    return Response(ser.data)
+
+
+@api_view(["GET"])
+def list_my_group_sessions(request):
+    hosted = GroupTherapySession.objects.filter(host=request.user, status=GroupTherapySession.Status.ACTIVE)
+    joined = GroupTherapySession.objects.filter(participants=request.user, status=GroupTherapySession.Status.ACTIVE)
+    all_active = GroupTherapySession.objects.filter(status=GroupTherapySession.Status.ACTIVE)[:15]
+
+    sessions_map = {s.id: s for s in (list(hosted) + list(joined) + list(all_active))}
+    sessions = list(sessions_map.values())
+    sessions.sort(key=lambda s: s.created_at, reverse=True)
+
+    ser = GroupTherapySessionSerializer(sessions, many=True, context={"request": request})
+    return Response({"sessions": ser.data})
+
+
+@api_view(["GET"])
+def get_group_session_detail(request, session_id):
+    session = GroupTherapySession.objects.filter(id=session_id).first()
+    if not session:
+        return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    responses = GroupTherapyActivityResponse.objects.filter(session=session).order_by("-created_at")[:50]
+
+    ser = GroupTherapySessionSerializer(session, context={"request": request})
+    resp_ser = GroupTherapyActivityResponseSerializer(responses, many=True, context={"request": request})
+
+    return Response({
+        "session": ser.data,
+        "activity_responses": resp_ser.data,
+    })
+
+
+@api_view(["GET", "POST"])
+def group_session_chat(request, session_id):
+    session = GroupTherapySession.objects.filter(id=session_id).first()
+    if not session:
+        return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "GET":
+        messages = GroupTherapyMessage.objects.filter(session=session).order_by("created_at")[:200]
+        ser = GroupTherapyMessageSerializer(messages, many=True, context={"request": request})
+        return Response({
+            "messages": ser.data,
+            "participant_count": session.participants.count(),
+        })
+
+    # POST new chat message or feeling emoji
+    content = request.data.get("content", "").strip()
+    emoji_reaction = request.data.get("emoji_reaction", "").strip()
+    msg_type = request.data.get("message_type", GroupTherapyMessage.MessageType.CHAT)
+
+    if not content and not emoji_reaction:
+        return Response({"detail": "Message content or emoji reaction required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    msg = GroupTherapyMessage.objects.create(
+        session=session,
+        sender=request.user,
+        content=content if content else f"is feeling {emoji_reaction}",
+        emoji_reaction=emoji_reaction,
+        message_type=msg_type if msg_type in GroupTherapyMessage.MessageType.values else GroupTherapyMessage.MessageType.CHAT,
+    )
+
+    ser = GroupTherapyMessageSerializer(msg, context={"request": request})
+    return Response(ser.data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+def submit_group_activity_response(request, session_id):
+    session = GroupTherapySession.objects.filter(id=session_id).first()
+    if not session:
+        return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    activity_type = request.data.get("activity_type", session.current_activity)
+    response_data = request.data.get("response_data", {})
+
+    resp = GroupTherapyActivityResponse.objects.create(
+        session=session,
+        user=request.user,
+        activity_type=activity_type,
+        response_data=response_data,
+    )
+
+    ser = GroupTherapyActivityResponseSerializer(resp, context={"request": request})
+    return Response(ser.data, status=status.HTTP_201_CREATED)
+
+
+@api_view(["POST"])
+def set_group_activity(request, session_id):
+    session = GroupTherapySession.objects.filter(id=session_id).first()
+    if not session:
+        return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if session.host_id != request.user.id:
+        return Response({"detail": "Only the session host can change the active activity."}, status=status.HTTP_403_FORBIDDEN)
+
+    activity_type = request.data.get("activity_type", "").strip()
+    activity_data = request.data.get("activity_data", {})
+
+    if activity_type in GroupTherapySession.Activity.values:
+        session.current_activity = activity_type
+        if activity_data:
+            session.activity_data = activity_data
+        session.save(update_fields=["current_activity", "activity_data"])
+
+        # System message broadcast
+        GroupTherapyMessage.objects.create(
+            session=session,
+            sender=request.user,
+            content=f"Host changed activity to: {session.get_current_activity_display()}",
+            message_type=GroupTherapyMessage.MessageType.SYSTEM,
+        )
+
+    ser = GroupTherapySessionSerializer(session, context={"request": request})
+    return Response(ser.data)
+
+
+@api_view(["POST"])
+def request_join_group_session(request):
+    code = request.data.get("invite_code", "").strip().upper()
+    if not code:
+        return Response({"detail": "Invite code is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    session = GroupTherapySession.objects.filter(invite_code__iexact=code, status=GroupTherapySession.Status.ACTIVE).first()
+    if not session:
+        return Response({"detail": "Active group session with this code was not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    # Host or existing participant bypasses pending approval
+    if session.host_id == request.user.id or session.participants.filter(id=request.user.id).exists():
+        if not session.participants.filter(id=request.user.id).exists():
+            session.participants.add(request.user)
+        ser = GroupTherapySessionSerializer(session, context={"request": request})
+        return Response({"status": "approved", "session": ser.data})
+
+    # Capacity check
+    if session.participants.count() >= session.max_participants:
+        return Response({"detail": "Session is at maximum capacity."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Check for existing request
+    existing_req = GroupTherapyJoinRequest.objects.filter(session=session, user=request.user).first()
+    if existing_req:
+        if existing_req.status == GroupTherapyJoinRequest.Status.APPROVED:
+            session.participants.add(request.user)
+            ser = GroupTherapySessionSerializer(session, context={"request": request})
+            return Response({"status": "approved", "session": ser.data})
+        elif existing_req.status == GroupTherapyJoinRequest.Status.REJECTED:
+            return Response({"status": "rejected", "detail": "Your request to join this session was rejected by the host."}, status=status.HTTP_403_FORBIDDEN)
+        else:
+            return Response({"status": "pending", "request_id": existing_req.id, "detail": "Join request sent. Waiting for host approval."})
+
+    # Create new pending request
+    join_req = GroupTherapyJoinRequest.objects.create(
+        session=session,
+        user=request.user,
+        status=GroupTherapyJoinRequest.Status.PENDING,
+    )
+
+    # Post system notification for host
+    GroupTherapyMessage.objects.create(
+        session=session,
+        sender=request.user,
+        content=f"{request.user.full_name} sent a request to join the therapy session.",
+        message_type=GroupTherapyMessage.MessageType.SYSTEM,
+    )
+
+    return Response({
+        "status": "pending",
+        "request_id": join_req.id,
+        "detail": "Join request sent. Waiting for host approval.",
+    }, status=status.HTTP_202_ACCEPTED)
+
+
+@api_view(["GET"])
+def get_join_request_status(request, request_id):
+    join_req = GroupTherapyJoinRequest.objects.filter(id=request_id).first()
+    if not join_req:
+        return Response({"detail": "Join request not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if join_req.user_id != request.user.id and join_req.session.host_id != request.user.id:
+        return Response({"detail": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
+
+    if join_req.status == GroupTherapyJoinRequest.Status.APPROVED:
+        join_req.session.participants.add(join_req.user)
+        ser = GroupTherapySessionSerializer(join_req.session, context={"request": request})
+        return Response({"status": "approved", "session": ser.data})
+
+    return Response({"status": join_req.status, "request_id": join_req.id})
+
+
+@api_view(["GET"])
+def list_session_join_requests(request, session_id):
+    session = GroupTherapySession.objects.filter(id=session_id).first()
+    if not session:
+        return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if session.host_id != request.user.id:
+        return Response({"detail": "Only the session host can view join requests."}, status=status.HTTP_403_FORBIDDEN)
+
+    pending_reqs = GroupTherapyJoinRequest.objects.filter(session=session, status=GroupTherapyJoinRequest.Status.PENDING)
+    ser = GroupTherapyJoinRequestSerializer(pending_reqs, many=True, context={"request": request})
+    return Response({"requests": ser.data})
+
+
+@api_view(["POST"])
+def respond_join_request(request, session_id, request_id):
+    session = GroupTherapySession.objects.filter(id=session_id).first()
+    if not session:
+        return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if session.host_id != request.user.id:
+        return Response({"detail": "Only the session host can respond to join requests."}, status=status.HTTP_403_FORBIDDEN)
+
+    join_req = GroupTherapyJoinRequest.objects.filter(id=request_id, session=session).first()
+    if not join_req:
+        return Response({"detail": "Join request not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    action = request.data.get("action", "").strip().lower()
+    if action == "approve":
+        join_req.status = GroupTherapyJoinRequest.Status.APPROVED
+        join_req.save(update_fields=["status"])
+        session.participants.add(join_req.user)
+
+        GroupTherapyMessage.objects.create(
+            session=session,
+            sender=join_req.user,
+            content=f"{join_req.user.full_name} was approved and entered the therapy session.",
+            message_type=GroupTherapyMessage.MessageType.SYSTEM,
+        )
+    elif action == "reject":
+        join_req.status = GroupTherapyJoinRequest.Status.REJECTED
+        join_req.save(update_fields=["status"])
+    else:
+        return Response({"detail": "Invalid action. Use 'approve' or 'reject'."}, status=status.HTTP_400_BAD_REQUEST)
+
+    ser = GroupTherapyJoinRequestSerializer(join_req, context={"request": request})
+    return Response(ser.data)
+
+
+@api_view(["POST"])
+def leave_group_session(request, session_id):
+    session = GroupTherapySession.objects.filter(id=session_id).first()
+    if not session:
+        return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if session.participants.filter(id=request.user.id).exists():
+        session.participants.remove(request.user)
+        GroupTherapyMessage.objects.create(
+            session=session,
+            sender=request.user,
+            content=f"{request.user.full_name} left the therapy session.",
+            message_type=GroupTherapyMessage.MessageType.SYSTEM,
+        )
+
+    return Response({"detail": "Successfully left group session."})
+
+
+@api_view(["DELETE"])
+def delete_group_session(request, session_id):
+    session = GroupTherapySession.objects.filter(id=session_id).first()
+    if not session:
+        return Response({"detail": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if session.host_id != request.user.id:
+        return Response({"detail": "Only the session host can delete the room."}, status=status.HTTP_403_FORBIDDEN)
+
+    title = session.title
+    session.delete()
+    return Response({"detail": f"Session room '{title}' was deleted successfully."})
+
+

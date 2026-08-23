@@ -38,6 +38,8 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [role, setRole] = useState<"patient" | "clinician">("patient");
+  const [sex, setSex] = useState<"female" | "male" | "other" | "prefer_not_to_say">("prefer_not_to_say");
+  const [dateOfBirth, setDateOfBirth] = useState("");
   const [country, setCountry] = useState("");
   const [state, setState] = useState("");
   const [city, setCity] = useState("");
@@ -109,6 +111,8 @@ export default function Login() {
           country: country.trim(),
           state: state.trim(),
           city: city.trim(),
+          sex: sex || undefined,
+          date_of_birth: dateOfBirth || undefined,
         });
         toast(t("auth.accountCreatedFor", { name: session.full_name }), "ok");
       }
@@ -212,6 +216,29 @@ export default function Login() {
                         <option value="patient">{t("auth.rolePatient")}</option>
                         <option value="clinician">{t("auth.roleClinician")}</option>
                       </select>
+                    </Field>
+
+                    <Field label={t("auth.sex")}>
+                      <select
+                        className="select"
+                        value={sex}
+                        onChange={(e) => setSex(e.target.value as typeof sex)}
+                      >
+                        <option value="prefer_not_to_say">{t("auth.sexPreferNotToSay")}</option>
+                        <option value="female">{t("auth.sexFemale")}</option>
+                        <option value="male">{t("auth.sexMale")}</option>
+                        <option value="other">{t("auth.sexOther")}</option>
+                      </select>
+                    </Field>
+
+                    <Field label={t("auth.dateOfBirth")}>
+                      <input
+                        type="date"
+                        className="input"
+                        value={dateOfBirth}
+                        max={new Date().toISOString().split("T")[0]}
+                        onChange={(e) => setDateOfBirth(e.target.value)}
+                      />
                     </Field>
 
                     {/* Location Section */}
