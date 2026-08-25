@@ -55,9 +55,9 @@ class RegisterSerializer(serializers.Serializer):
     country = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
     state = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
     city = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
-    date_of_birth = serializers.DateField(required=False, allow_null=True)
+    date_of_birth = serializers.DateField(required=True, allow_null=False)
     sex = serializers.ChoiceField(
-        choices=["male", "female", "other", "prefer_not_to_say"], required=False, allow_null=True
+        choices=["male", "female", "other", "prefer_not_to_say"], required=True, allow_null=False
     )
 
     def to_internal_value(self, data):

@@ -80,7 +80,7 @@ export default function GroupTherapy() {
   const [activeTab, setActiveTab] = useState<
     "breathing" | "mood_checkin" | "reflection_prompt" | "gratitude_wall" | "sound_library" | "rehab_programme"
   >("breathing");
-  
+
   // Breathing exercise local animation & audio synthesizer state
   const [breathingPhase, setBreathingPhase] = useState<"Inhale" | "Hold" | "Exhale">("Inhale");
   const [breathingSeconds, setBreathingSeconds] = useState(4);
@@ -629,9 +629,9 @@ export default function GroupTherapy() {
   const moodResponses = activityResponses.filter((r) => r.activity_type === "mood_checkin");
   const avgDistress = moodResponses.length
     ? (
-        moodResponses.reduce((acc, r) => acc + Number(r.response_data.distress_level || 5), 0) /
-        moodResponses.length
-      ).toFixed(1)
+      moodResponses.reduce((acc, r) => acc + Number(r.response_data.distress_level || 5), 0) /
+      moodResponses.length
+    ).toFixed(1)
     : "5.0";
 
   return (
@@ -900,199 +900,159 @@ export default function GroupTherapy() {
             </div>
           )}
 
-          {/* Room Main Split Layout */}
-          <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr", gap: "var(--s6)", alignItems: "start" }}>
-            
-            {/* LEFT COLUMN: LIVE CHATBOX + REFLECTION ANSWERS DISPLAY */}
-            <div className="stack stack-4">
-              {/* Chatbox Container */}
+          {/* Room Main Stack Layout */}
+          <div className="stack stack-6">
+
+            {/* 1. ROOM CHATBOX CONTAINER */}
+            <div
+              className="panel stack stack-3"
+              style={{
+                height: "680px",
+                display: "flex",
+                flexDirection: "column",
+                border: "2px solid rgba(99, 102, 241, 0.5)",
+                boxShadow: "0 0 20px rgba(99, 102, 241, 0.15)",
+                borderRadius: "var(--radius-md)",
+              }}
+            >
+              <div className="row row--between" style={{ borderBottom: "1px solid var(--border)", paddingBottom: "var(--s2)" }}>
+                <div>
+                  <h3 style={{ margin: 0 }}>Room Chat & Reactions</h3>
+                  <span className="meta" style={{ fontSize: "var(--fs-xs)" }}>Live messages & feelings</span>
+                </div>
+                <span className="chip chip--neutral">● Polling</span>
+              </div>
+
+              {/* Chat Message Stream */}
               <div
-                className="panel stack stack-3"
+                ref={chatScrollRef}
                 style={{
-                  height: "450px",
+                  flex: 1,
+                  overflowY: "auto",
                   display: "flex",
                   flexDirection: "column",
-                  border: "2px solid rgba(99, 102, 241, 0.5)",
-                  boxShadow: "0 0 20px rgba(99, 102, 241, 0.15)",
-                  borderRadius: "var(--radius-md)",
+                  gap: "var(--s2)",
+                  paddingRight: "var(--s2)",
                 }}
               >
-                <div className="row row--between" style={{ borderBottom: "1px solid var(--border)", paddingBottom: "var(--s2)" }}>
-                  <div>
-                    <h3 style={{ margin: 0 }}>Room Chat & Reactions</h3>
-                    <span className="meta" style={{ fontSize: "var(--fs-xs)" }}>Live messages & feelings</span>
-                  </div>
-                  <span className="chip chip--neutral">● Polling</span>
-                </div>
+                {chatMessages.length === 0 ? (
+                  <p className="meta" style={{ textAlign: "center", margin: "auto" }}>
+                    No chat messages yet. Say hello or share your feeling!
+                  </p>
+                ) : (
+                  chatMessages.map((msg) => {
+                    const isSystem = msg.message_type === "system";
+                    const isEmoji = msg.message_type === "feeling_emoji";
 
-                {/* Chat Message Stream */}
-                <div
-                  ref={chatScrollRef}
-                  style={{
-                    flex: 1,
-                    overflowY: "auto",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "var(--s2)",
-                    paddingRight: "var(--s2)",
-                  }}
-                >
-                  {chatMessages.length === 0 ? (
-                    <p className="meta" style={{ textAlign: "center", margin: "auto" }}>
-                      No chat messages yet. Say hello or share your feeling!
-                    </p>
-                  ) : (
-                    chatMessages.map((msg) => {
-                      const isSystem = msg.message_type === "system";
-                      const isEmoji = msg.message_type === "feeling_emoji";
-
-                      if (isSystem) {
-                        return (
-                          <div
-                            key={msg.id}
-                            style={{
-                              textAlign: "center",
-                              fontSize: "var(--fs-xs)",
-                              color: "var(--text-meta)",
-                              background: "rgba(255,255,255,0.03)",
-                              padding: "4px 8px",
-                              borderRadius: "var(--radius-sm)",
-                              margin: "4px 0",
-                            }}
-                          >
-                            ℹ️ {msg.content}
-                          </div>
-                        );
-                      }
-
+                    if (isSystem) {
                       return (
                         <div
                           key={msg.id}
                           style={{
-                            alignSelf: msg.is_own_message ? "flex-end" : "flex-start",
-                            maxWidth: "85%",
-                            background: msg.is_own_message
-                              ? "var(--ink)"
-                              : "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)",
-                            color: "#ffffff",
-                            border: msg.is_own_message
-                              ? "1px solid rgba(255, 255, 255, 0.2)"
-                              : "1px solid rgba(148, 163, 184, 0.25)",
-                            boxShadow: msg.is_own_message
-                              ? "0 3px 12px rgba(0, 0, 0, 0.3)"
-                              : "0 2px 8px rgba(0, 0, 0, 0.2)",
-                            padding: "var(--s2) var(--s3)",
-                            borderRadius: "var(--radius-md)",
-                            borderBottomRightRadius: msg.is_own_message ? "2px" : "var(--radius-md)",
-                            borderBottomLeftRadius: msg.is_own_message ? "var(--radius-md)" : "2px",
+                            textAlign: "center",
+                            fontSize: "var(--fs-xs)",
+                            color: "var(--text-meta)",
+                            background: "rgba(255,255,255,0.03)",
+                            padding: "4px 8px",
+                            borderRadius: "var(--radius-sm)",
+                            margin: "4px 0",
                           }}
                         >
-                          <div className="row row--between" style={{ gap: "var(--s3)", marginBottom: "2px" }}>
-                            <strong style={{ fontSize: "var(--fs-xs)", color: msg.is_own_message ? "#ffffff" : "#38bdf8" }}>
-                              {msg.is_own_message ? "You" : msg.sender_name}
-                            </strong>
-                            <span className="meta" style={{ fontSize: "10px", color: msg.is_own_message ? "rgba(255, 255, 255, 0.7)" : "#94a3b8" }}>
-                              {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                            </span>
-                          </div>
-
-                          {isEmoji ? (
-                            <div className="row row--tight" style={{ marginTop: "4px" }}>
-                              <span style={{ fontSize: "1.6rem" }}>{msg.emoji_reaction}</span>
-                              <span style={{ fontSize: "var(--fs-small)", fontStyle: "italic", color: "#ffffff" }}>{msg.content}</span>
-                            </div>
-                          ) : (
-                            <div style={{ fontSize: "var(--fs-small)", wordBreak: "break-word", color: "#ffffff", lineHeight: "1.45" }}>{msg.content}</div>
-                          )}
+                          ℹ️ {msg.content}
                         </div>
                       );
-                    })
-                  )}
-                </div>
+                    }
 
-                {/* Quick Feelings Emoji Row */}
-                <div style={{ borderTop: "1px solid var(--border)", paddingTop: "var(--s2)" }}>
-                  <span className="meta" style={{ fontSize: "11px", display: "block", marginBottom: "4px" }}>
-                    Express how you are feeling to the group:
-                  </span>
-                  <div style={{ display: "flex", gap: "6px", overflowX: "auto", paddingBottom: "4px" }}>
-                    {FEELING_EMOJIS.map((f) => (
-                      <button
-                        key={f.emoji}
-                        type="button"
-                        className="btn btn--ghost btn--sm"
-                        onClick={() => handleSendEmojiReaction(f.emoji)}
-                        title={`Send ${f.label}`}
-                        style={{ padding: "4px 8px", background: "rgba(255,255,255,0.05)", borderRadius: "var(--radius-sm)" }}
+                    return (
+                      <div
+                        key={msg.id}
+                        style={{
+                          alignSelf: msg.is_own_message ? "flex-end" : "flex-start",
+                          maxWidth: "85%",
+                          background: msg.is_own_message
+                            ? "var(--ink)"
+                            : "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)",
+                          color: "#ffffff",
+                          border: msg.is_own_message
+                            ? "1px solid rgba(255, 255, 255, 0.2)"
+                            : "1px solid rgba(148, 163, 184, 0.25)",
+                          boxShadow: msg.is_own_message
+                            ? "0 3px 12px rgba(0, 0, 0, 0.3)"
+                            : "0 2px 8px rgba(0, 0, 0, 0.2)",
+                          padding: "var(--s2) var(--s3)",
+                          borderRadius: "var(--radius-md)",
+                          borderBottomRightRadius: msg.is_own_message ? "2px" : "var(--radius-md)",
+                          borderBottomLeftRadius: msg.is_own_message ? "var(--radius-md)" : "2px",
+                        }}
                       >
-                        <span>{f.emoji}</span>
-                        <span style={{ fontSize: "10px", marginLeft: "4px" }}>{f.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Chat Input Form */}
-                <form onSubmit={handleSendChat} className="row row--tight" style={{ marginTop: "var(--s2)" }}>
-                  <input
-                    type="text"
-                    placeholder="Type a message to the group..."
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    className="input"
-                    style={{
-                      flex: 1,
-                      background: "rgba(15, 23, 42, 0.95)",
-                      color: "#f8fafc",
-                      border: "1px solid rgba(148, 163, 184, 0.4)",
-                    }}
-                  />
-                  <button type="submit" className="btn btn--primary" disabled={sendingChat || !chatInput.trim()}>
-                    Send
-                  </button>
-                </form>
-              </div>
-
-              {/* GROUP REFLECTION ANSWERS DISPLAYED UNDER CHAT BOX */}
-              <div className="panel stack stack-3" style={{ background: "var(--surface-elevated)", borderLeft: "4px solid #8b5cf6" }}>
-                <div className="row row--between">
-                  <div className="row row--tight">
-                    <span style={{ fontSize: "1.2rem" }}>💡</span>
-                    <h3 style={{ margin: 0 }}>Group Reflection Answers</h3>
-                  </div>
-                  <span className="chip chip--neutral">{reflectionAnswers.length} Responses</span>
-                </div>
-                <p className="meta" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-                  Answers posted by group participants for: <em>"{activeSession.activity_data?.prompt || "What sound therapy technique worked best for you today?"}"</em>
-                </p>
-
-                <div style={{ maxHeight: "250px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "10px", marginTop: "4px" }}>
-                  {reflectionAnswers.length === 0 ? (
-                    <div style={{ textAlign: "center", padding: "var(--s3)", color: "var(--text-meta)", fontStyle: "italic", fontSize: "var(--fs-small)" }}>
-                      No reflection answers posted yet. Go to tab "3. Reflection" on the right and click Post to share your reflection!
-                    </div>
-                  ) : (
-                    reflectionAnswers.map((r) => (
-                      <div key={r.id} className="panel stack stack-1" style={{ background: "rgba(15, 23, 42, 0.8)", border: "1px solid rgba(139, 92, 246, 0.3)" }}>
-                        <div className="row row--between">
-                          <strong style={{ fontSize: "var(--fs-xs)", color: "#a78bfa" }}>👤 {r.user_name}</strong>
-                          <span className="meta" style={{ fontSize: "10px", opacity: 0.7 }}>
-                            {new Date(r.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        <div className="row row--between" style={{ gap: "var(--s3)", marginBottom: "2px" }}>
+                          <strong style={{ fontSize: "var(--fs-xs)", color: msg.is_own_message ? "#ffffff" : "#38bdf8" }}>
+                            {msg.is_own_message ? "You" : msg.sender_name}
+                          </strong>
+                          <span className="meta" style={{ fontSize: "10px", color: msg.is_own_message ? "rgba(255, 255, 255, 0.7)" : "#94a3b8" }}>
+                            {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                           </span>
                         </div>
-                        <p style={{ margin: "4px 0 0 0", fontSize: "var(--fs-small)", color: "#f8fafc", lineHeight: "1.4" }}>
-                          "{r.response_data.text}"
-                        </p>
+
+                        {isEmoji ? (
+                          <div className="row row--tight" style={{ marginTop: "4px" }}>
+                            <span style={{ fontSize: "1.6rem" }}>{msg.emoji_reaction}</span>
+                            <span style={{ fontSize: "var(--fs-small)", fontStyle: "italic", color: "#ffffff" }}>{msg.content}</span>
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: "var(--fs-small)", wordBreak: "break-word", color: "#ffffff", lineHeight: "1.45" }}>{msg.content}</div>
+                        )}
                       </div>
-                    ))
-                  )}
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Quick Feelings Emoji Row */}
+              <div style={{ borderTop: "1px solid var(--border)", paddingTop: "var(--s2)" }}>
+                <span className="meta" style={{ fontSize: "11px", display: "block", marginBottom: "4px" }}>
+                  Express how you are feeling to the group:
+                </span>
+                <div style={{ display: "flex", gap: "6px", overflowX: "auto", paddingBottom: "4px" }}>
+                  {FEELING_EMOJIS.map((f) => (
+                    <button
+                      key={f.emoji}
+                      type="button"
+                      className="btn btn--ghost btn--sm"
+                      onClick={() => handleSendEmojiReaction(f.emoji)}
+                      title={`Send ${f.label}`}
+                      style={{ padding: "4px 8px", background: "rgba(255,255,255,0.05)", borderRadius: "var(--radius-sm)" }}
+                    >
+                      <span>{f.emoji}</span>
+                      <span style={{ fontSize: "10px", marginLeft: "4px" }}>{f.label}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
 
+              {/* Chat Input Form */}
+              <form onSubmit={handleSendChat} className="row row--tight" style={{ marginTop: "var(--s2)" }}>
+                <input
+                  type="text"
+                  placeholder="Type a message to the group..."
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  className="input"
+                  style={{
+                    flex: 1,
+                    background: "rgba(15, 23, 42, 0.95)",
+                    color: "#f8fafc",
+                    border: "1px solid rgba(148, 163, 184, 0.4)",
+                  }}
+                />
+                <button type="submit" className="btn btn--primary" disabled={sendingChat || !chatInput.trim()}>
+                  Send
+                </button>
+              </form>
             </div>
 
-            {/* RIGHT COLUMN: INTERACTIVE GROUP THERAPEUTIC ACTIVITIES */}
-            <div className="panel stack stack-4" style={{ minHeight: "650px" }}>
+            {/* 2. GROUP THERAPEUTIC ACTIVITIES (LANDSCAPE / HORIZONTAL RECTANGLE BOX BELOW CHATBOX) */}
+            <div className="panel stack stack-4" style={{ width: "100%", boxSizing: "border-box" }}>
               <div>
                 <h2>Group Therapeutic Activities</h2>
                 <p className="meta">Synchronized exercises designed to relieve tinnitus stress & build peer strength.</p>
@@ -1152,53 +1112,53 @@ export default function GroupTherapy() {
 
               {/* TAB 1: SYNCHRONIZED BREATHING & SOUNDSCAPE */}
               {activeTab === "breathing" && (
-                <div className="stack stack-4" style={{ textAlign: "center" }}>
-                  <div className="panel" style={{ background: "rgba(15,23,42,0.8)", padding: "var(--s6)", borderRadius: "var(--radius-md)" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--s5)", alignItems: "center" }}>
+                  <div className="panel" style={{ background: "rgba(15,23,42,0.8)", padding: "var(--s5)", borderRadius: "var(--radius-md)", textAlign: "center" }}>
                     <span className="label label--signal">GUIDED BREATHING CIRCLE</span>
 
                     {/* Animated Breathing Sphere */}
                     <div
                       style={{
-                        width: "160px",
-                        height: "160px",
+                        width: "140px",
+                        height: "140px",
                         borderRadius: "50%",
-                        margin: "var(--s4) auto",
+                        margin: "var(--s3) auto",
                         background:
                           breathingPhase === "Inhale"
                             ? "radial-gradient(circle, rgba(59,130,246,0.8) 0%, rgba(37,99,235,0.2) 70%)"
                             : breathingPhase === "Hold"
-                            ? "radial-gradient(circle, rgba(16,185,129,0.8) 0%, rgba(5,150,105,0.2) 70%)"
-                            : "radial-gradient(circle, rgba(139,92,246,0.8) 0%, rgba(124,58,237,0.2) 70%)",
+                              ? "radial-gradient(circle, rgba(16,185,129,0.8) 0%, rgba(5,150,105,0.2) 70%)"
+                              : "radial-gradient(circle, rgba(139,92,246,0.8) 0%, rgba(124,58,237,0.2) 70%)",
                         boxShadow: "0 0 40px rgba(59,130,246,0.4)",
                         display: "flex",
                         flexDirection: "column",
                         alignItems: "center",
                         justifyContent: "center",
                         transition: "all 1s ease-in-out",
-                        transform: breathingPhase === "Inhale" ? "scale(1.15)" : breathingPhase === "Hold" ? "scale(1.15)" : "scale(0.85)",
+                        transform: breathingPhase === "Inhale" ? "scale(1.12)" : breathingPhase === "Hold" ? "scale(1.12)" : "scale(0.88)",
                       }}
                     >
                       <strong style={{ fontSize: "var(--fs-headline-sm)", color: "#fff" }}>{breathingPhase}</strong>
                       <span style={{ fontSize: "var(--fs-medium)", color: "rgba(255,255,255,0.8)" }}>{breathingSeconds}s</span>
                     </div>
 
-                    <p className="meta">Breathe in sync with your group to calm auditory nerve hyper-reactivity.</p>
+                    <p className="meta" style={{ margin: 0 }}>Breathe in sync with your group to calm auditory nerve hyper-reactivity.</p>
                   </div>
 
                   {/* Sound Masking Synthesizer */}
-                  <div className="panel stack stack-3" style={{ textAlign: "left" }}>
-                    <h3>Group Tinnitus Masking Synthesizer</h3>
-                    <p className="meta">Play background acoustic masking while doing group activities.</p>
+                  <div className="panel stack stack-3" style={{ textAlign: "left", background: "rgba(15,23,42,0.8)" }}>
+                    <h3 style={{ margin: 0 }}>Group Tinnitus Masking Synthesizer</h3>
+                    <p className="meta" style={{ margin: 0 }}>Play background acoustic masking while doing group activities.</p>
 
-                    <div className="row row--between row--wrap">
-                      <div className="row row--tight">
-                        <label className="meta">Sound Masker:</label>
+                    <div className="stack stack-3" style={{ marginTop: "var(--s2)" }}>
+                      <div className="stack stack-1">
+                        <label className="meta" style={{ fontWeight: 600 }}>Sound Masker:</label>
                         <select
                           value={soundType}
                           onChange={(e) => setSoundType(e.target.value as any)}
                           className="input"
                           style={{
-                            maxWidth: "160px",
+                            width: "100%",
                             background: "rgba(15, 23, 42, 0.95)",
                             color: "#f8fafc",
                             border: "1px solid rgba(148, 163, 184, 0.4)",
@@ -1214,6 +1174,7 @@ export default function GroupTherapy() {
                         type="button"
                         className={`btn ${isAudioPlaying ? "btn--outline" : "btn--primary"}`}
                         onClick={toggleMaskingAudio}
+                        style={{ width: "100%", fontWeight: "bold" }}
                       >
                         {isAudioPlaying ? "🔇 Stop Masking Sound" : "🔊 Play Masking Sound"}
                       </button>
@@ -1224,10 +1185,10 @@ export default function GroupTherapy() {
 
               {/* TAB 2: MOOD & DISTRESS RADAR */}
               {activeTab === "mood_checkin" && (
-                <div className="stack stack-4">
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--s5)" }}>
                   <div className="panel stack stack-3" style={{ background: "var(--surface-elevated)" }}>
-                    <h3>Room Tinnitus Distress Average: <span style={{ color: "var(--accent)" }}>{avgDistress} / 10</span></h3>
-                    <p className="meta">Submit your current distress level to calculate room statistics anonymously.</p>
+                    <h3 style={{ margin: 0 }}>Room Distress Avg: <span style={{ color: "var(--accent)" }}>{avgDistress} / 10</span></h3>
+                    <p className="meta" style={{ margin: 0 }}>Submit your current distress level to calculate room statistics anonymously.</p>
 
                     <div className="stack stack-2" style={{ marginTop: "var(--s2)" }}>
                       <label className="row row--between">
@@ -1254,10 +1215,9 @@ export default function GroupTherapy() {
                     </div>
                   </div>
 
-                  {/* Room Check-in History */}
                   <div>
-                    <h4>Recent Room Check-ins ({moodResponses.length})</h4>
-                    <div style={{ maxHeight: "250px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px", marginTop: "8px" }}>
+                    <h4 style={{ margin: "0 0 8px 0" }}>Recent Room Check-ins ({moodResponses.length})</h4>
+                    <div style={{ maxHeight: "200px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px" }}>
                       {moodResponses.length === 0 ? (
                         <p className="meta">No mood check-ins logged yet for this session.</p>
                       ) : (
@@ -1275,7 +1235,7 @@ export default function GroupTherapy() {
 
               {/* TAB 3: REFLECTION PROMPT */}
               {activeTab === "reflection_prompt" && (
-                <div className="stack stack-4">
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--s5)" }}>
                   <div className="panel stack stack-3" style={{ borderLeft: "4px solid #8b5cf6" }}>
                     <span className="label label--signal">SESSION REFLECTION PROMPT</span>
                     <h3 style={{ margin: 0 }}>
@@ -1283,11 +1243,10 @@ export default function GroupTherapy() {
                     </h3>
                   </div>
 
-                  {/* Submission Form */}
                   <form onSubmit={handleSubmitReflection} className="stack stack-2">
                     <textarea
                       rows={3}
-                      placeholder="Share your reflection or advice with fellow patients... (Will display under Chat box)"
+                      placeholder="Share your reflection or advice with fellow patients... (Will display under Group Reflection Answers below)"
                       value={reflectionInput}
                       onChange={(e) => setReflectionInput(e.target.value)}
                       className="input"
@@ -1344,9 +1303,9 @@ export default function GroupTherapy() {
                   <div
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
+                      gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
                       gap: "var(--s3)",
-                      maxHeight: "320px",
+                      maxHeight: "280px",
                       overflowY: "auto",
                       paddingRight: "4px",
                     }}
@@ -1371,7 +1330,7 @@ export default function GroupTherapy() {
                                 display: "flex",
                                 flexDirection: "column",
                                 justifyContent: "space-between",
-                                minHeight: "100px",
+                                minHeight: "90px",
                               }}
                             >
                               <p style={{ margin: 0, fontWeight: 500, fontSize: "var(--fs-small)" }}>"{r.response_data.note}"</p>
@@ -1386,15 +1345,15 @@ export default function GroupTherapy() {
                 </div>
               )}
 
-              {/* TAB 5: GROUP NATURE & RELAXING SOUND THERAPY (AAKASH'S 20 SOUNDS + WEB AUDIO ENGINE) */}
+              {/* TAB 5: GROUP NATURE & RELAXING SOUND THERAPY */}
               {activeTab === "sound_library" && (
-                <div className="stack stack-4">
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--s5)" }}>
                   <div className="panel stack stack-3" style={{ background: "rgba(15, 23, 42, 0.8)", border: "1px solid rgba(148, 163, 184, 0.3)" }}>
                     <div className="row row--between">
                       <div>
                         <h3 style={{ margin: 0, color: "#fff" }}>Group Nature & Relaxing Soundscapes</h3>
-                        <p className="meta" style={{ color: "#cbd5e1" }}>
-                          20 live synthesized soundscapes for acoustic masking and relaxation during group sessions.
+                        <p className="meta" style={{ color: "#cbd5e1", margin: "4px 0 0 0" }}>
+                          20 live synthesized soundscapes for acoustic masking and relaxation.
                         </p>
                       </div>
                       <Chip tone="info">20 Preset Sounds</Chip>
@@ -1424,132 +1383,132 @@ export default function GroupTherapy() {
                           </option>
                         ))}
                       </select>
-                      <p className="meta" style={{ color: "#94a3b8", fontSize: "var(--fs-xs)" }}>
+                      <p className="meta" style={{ color: "#94a3b8", fontSize: "var(--fs-xs)", margin: 0 }}>
                         {selectedSound.goal}
                       </p>
                     </div>
+                  </div>
 
-                    {/* Audio Player Controls */}
-                    <div className="panel stack stack-3" style={{ background: "rgba(30, 41, 59, 0.7)", borderColor: "rgba(99, 102, 241, 0.3)" }}>
-                      <div className="row row--between">
-                        <strong style={{ color: "#fff" }}>{selectedSound.title}</strong>
-                        <Chip tone={soundPhase === "playing" ? "signal" : "ghost"}>
-                          {soundPhase === "playing" ? "Playing Live" : "Idle"}
-                        </Chip>
-                      </div>
+                  {/* Audio Player Controls */}
+                  <div className="panel stack stack-3" style={{ background: "rgba(30, 41, 59, 0.7)", borderColor: "rgba(99, 102, 241, 0.3)" }}>
+                    <div className="row row--between">
+                      <strong style={{ color: "#fff" }}>{selectedSound.title}</strong>
+                      <Chip tone={soundPhase === "playing" ? "signal" : "ghost"}>
+                        {soundPhase === "playing" ? "Playing Live" : "Idle"}
+                      </Chip>
+                    </div>
 
-                      {soundPhase === "playing" && (
-                        <div className="stack stack-3">
-                          <div className="row row--between">
-                            <Readout
-                              label="Elapsed Time"
-                              value={`${Math.floor(soundElapsed / 60)}:${String(Math.floor(soundElapsed % 60)).padStart(2, "0")}`}
-                              size="sm"
-                              tone="signal"
-                            />
-                            <Readout label="Target" value={selectedSound.minutes} unit="min" size="sm" />
-                          </div>
-
-                          <div>
-                            <span className="label" style={{ color: "#cbd5e1", marginBottom: "4px", display: "block" }}>
-                              Live Spectrum Output
-                            </span>
-                            <SpectrumBars data={spectrumData} height={50} bars={40} />
-                          </div>
-
-                          <Fader
-                            label="Volume (dBFS)"
-                            value={soundLevelDbfs}
-                            min={-60}
-                            max={-8}
-                            step={1}
-                            unit="dBFS"
-                            onChange={(val) => {
-                              setSoundLevelDbfs(val);
-                              soundHandleRef.current?.setLevelDb(val, 0.25);
-                            }}
-                            lowLabel="Quieter"
-                            highLabel="Louder"
+                    {soundPhase === "playing" && (
+                      <div className="stack stack-3">
+                        <div className="row row--between">
+                          <Readout
+                            label="Elapsed Time"
+                            value={`${Math.floor(soundElapsed / 60)}:${String(Math.floor(soundElapsed % 60)).padStart(2, "0")}`}
+                            size="sm"
+                            tone="signal"
                           />
+                          <Readout label="Target" value={selectedSound.minutes} unit="min" size="sm" />
                         </div>
-                      )}
 
-                      {/* Pre / Post Rating & Play Buttons */}
-                      {soundPhase === "idle" && (
-                        <div className="stack stack-2">
-                          <div className="row row--between">
-                            <span className="meta" style={{ color: "#e2e8f0" }}>Pre-Session Loudness (0 - 10):</span>
-                            <span className="mono" style={{ color: "#38bdf8", fontWeight: "bold" }}>{preVas} / 10</span>
-                          </div>
-                          <input
-                            type="range"
-                            min={0}
-                            max={10}
-                            step={0.5}
-                            value={preVas}
-                            onChange={(e) => setPreVas(Number(e.target.value))}
-                            style={{ width: "100%", accentColor: "var(--accent)" }}
-                          />
+                        <div>
+                          <span className="label" style={{ color: "#cbd5e1", marginBottom: "4px", display: "block" }}>
+                            Live Spectrum Output
+                          </span>
+                          <SpectrumBars data={spectrumData} height={40} bars={35} />
+                        </div>
+
+                        <Fader
+                          label="Volume (dBFS)"
+                          value={soundLevelDbfs}
+                          min={-60}
+                          max={-8}
+                          step={1}
+                          unit="dBFS"
+                          onChange={(val) => {
+                            setSoundLevelDbfs(val);
+                            soundHandleRef.current?.setLevelDb(val, 0.25);
+                          }}
+                          lowLabel="Quieter"
+                          highLabel="Louder"
+                        />
+                      </div>
+                    )}
+
+                    {/* Pre / Post Rating & Play Buttons */}
+                    {soundPhase === "idle" && (
+                      <div className="stack stack-2">
+                        <div className="row row--between">
+                          <span className="meta" style={{ color: "#e2e8f0" }}>Pre-Session Loudness (0 - 10):</span>
+                          <span className="mono" style={{ color: "#38bdf8", fontWeight: "bold" }}>{preVas} / 10</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={10}
+                          step={0.5}
+                          value={preVas}
+                          onChange={(e) => setPreVas(Number(e.target.value))}
+                          style={{ width: "100%", accentColor: "var(--accent)" }}
+                        />
+                        <button
+                          type="button"
+                          className="btn btn--primary"
+                          onClick={startSoundSession}
+                          style={{ fontWeight: "bold", marginTop: "8px" }}
+                        >
+                          ▶ Start Group Sound Session ({selectedSound.minutes}m)
+                        </button>
+                      </div>
+                    )}
+
+                    {soundPhase === "playing" && (
+                      <div className="row row--between" style={{ marginTop: "8px" }}>
+                        <button
+                          type="button"
+                          className="btn btn--outline"
+                          onClick={finishSoundSession}
+                          style={{ borderColor: "#f87171", color: "#fca5a5" }}
+                        >
+                          ⏹ Finish Session & Rate Relief
+                        </button>
+                      </div>
+                    )}
+
+                    {soundPhase === "post" && (
+                      <div className="stack stack-3" style={{ background: "rgba(15, 23, 42, 0.9)", padding: "12px", borderRadius: "8px" }}>
+                        <h4 style={{ color: "#fff", margin: 0 }}>Rate Post-Session Tinnitus Loudness</h4>
+                        <div className="row row--between">
+                          <span className="meta" style={{ color: "#e2e8f0" }}>Post-Session Loudness:</span>
+                          <span className="mono" style={{ color: "#10b981", fontWeight: "bold" }}>{postVas} / 10</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={10}
+                          step={0.5}
+                          value={postVas}
+                          onChange={(e) => setPostVas(Number(e.target.value))}
+                          style={{ width: "100%", accentColor: "#10b981" }}
+                        />
+                        <div className="row row--between">
+                          <button
+                            type="button"
+                            className="btn btn--ghost"
+                            onClick={() => setSoundPhase("idle")}
+                          >
+                            Skip Rating
+                          </button>
                           <button
                             type="button"
                             className="btn btn--primary"
-                            onClick={startSoundSession}
-                            style={{ fontWeight: "bold", marginTop: "8px" }}
+                            onClick={() => logSoundRelief(true)}
+                            style={{ background: "#10b981", borderColor: "#059669", fontWeight: "bold" }}
                           >
-                            ▶ Start Group Sound Session ({selectedSound.minutes}m)
+                            ✓ Save Session & Log Relief
                           </button>
                         </div>
-                      )}
-
-                      {soundPhase === "playing" && (
-                        <div className="row row--between" style={{ marginTop: "8px" }}>
-                          <button
-                            type="button"
-                            className="btn btn--outline"
-                            onClick={finishSoundSession}
-                            style={{ borderColor: "#f87171", color: "#fca5a5" }}
-                          >
-                            ⏹ Finish Session & Rate Relief
-                          </button>
-                        </div>
-                      )}
-
-                      {soundPhase === "post" && (
-                        <div className="stack stack-3" style={{ background: "rgba(15, 23, 42, 0.9)", padding: "12px", borderRadius: "8px" }}>
-                          <h4 style={{ color: "#fff", margin: 0 }}>Rate Post-Session Tinnitus Loudness</h4>
-                          <div className="row row--between">
-                            <span className="meta" style={{ color: "#e2e8f0" }}>Post-Session Loudness:</span>
-                            <span className="mono" style={{ color: "#10b981", fontWeight: "bold" }}>{postVas} / 10</span>
-                          </div>
-                          <input
-                            type="range"
-                            min={0}
-                            max={10}
-                            step={0.5}
-                            value={postVas}
-                            onChange={(e) => setPostVas(Number(e.target.value))}
-                            style={{ width: "100%", accentColor: "#10b981" }}
-                          />
-                          <div className="row row--between">
-                            <button
-                              type="button"
-                              className="btn btn--ghost"
-                              onClick={() => setSoundPhase("idle")}
-                            >
-                              Skip Rating
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn--primary"
-                              onClick={() => logSoundRelief(true)}
-                              style={{ background: "#10b981", borderColor: "#059669", fontWeight: "bold" }}
-                            >
-                              ✓ Save Session & Log Relief
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1652,6 +1611,42 @@ export default function GroupTherapy() {
                 </div>
               )}
 
+            </div>
+
+            {/* 3. GROUP REFLECTION ANSWERS DISPLAYED BELOW ACTIVITIES BOX */}
+            <div className="panel stack stack-3" style={{ background: "var(--surface-elevated)", borderLeft: "4px solid #8b5cf6" }}>
+              <div className="row row--between">
+                <div className="row row--tight">
+                  <span style={{ fontSize: "1.2rem" }}>💡</span>
+                  <h3 style={{ margin: 0 }}>Group Reflection Answers</h3>
+                </div>
+                <span className="chip chip--neutral">{reflectionAnswers.length} Responses</span>
+              </div>
+              <p className="meta" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
+                Answers posted by group participants for: <em>"{activeSession.activity_data?.prompt || "What sound therapy technique worked best for you today?"}"</em>
+              </p>
+
+              <div style={{ maxHeight: "250px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "10px", marginTop: "4px" }}>
+                {reflectionAnswers.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "var(--s3)", color: "var(--text-meta)", fontStyle: "italic", fontSize: "var(--fs-small)" }}>
+                    No reflection answers posted yet. Go to tab "3. Reflection" above and click Post to share your reflection!
+                  </div>
+                ) : (
+                  reflectionAnswers.map((r) => (
+                    <div key={r.id} className="panel stack stack-1" style={{ background: "rgba(15, 23, 42, 0.8)", border: "1px solid rgba(139, 92, 246, 0.3)" }}>
+                      <div className="row row--between">
+                        <strong style={{ fontSize: "var(--fs-xs)", color: "#a78bfa" }}>👤 {r.user_name}</strong>
+                        <span className="meta" style={{ fontSize: "10px", opacity: 0.7 }}>
+                          {new Date(r.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </div>
+                      <p style={{ margin: "4px 0 0 0", fontSize: "var(--fs-small)", color: "#f8fafc", lineHeight: "1.4" }}>
+                        "{r.response_data.text}"
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
 
           </div>
