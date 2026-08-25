@@ -521,9 +521,33 @@ export default function Community() {
                     </span>
                     <strong style={{ display: "block", fontSize: "13px", marginTop: "4px", color: "var(--ink)" }}>{r.title}</strong>
                     {r.link && (
-                      <a href={r.link} className="meta link" style={{ fontSize: "12px", color: "var(--signal)", marginTop: "2px", display: "inline-block" }}>
+                      /* Router navigation, not a bare `href`. These are in-app
+                         routes, and a plain anchor makes the browser perform a
+                         document navigation: the whole SPA reboots, the session
+                         re-hydrates, and the fragment is resolved against a page
+                         that has not rendered its sections yet — so the reader
+                         lands at the top of the guide rather than on the entry
+                         they asked for. `navigate` keeps it a route change, and
+                         the guide scrolls to the anchor once it has mounted. */
+                      <button
+                        type="button"
+                        onClick={() => navigate(r.link!)}
+                        className="meta link"
+                        style={{
+                          fontSize: "12px",
+                          color: "var(--signal)",
+                          marginTop: "2px",
+                          display: "inline-block",
+                          background: "none",
+                          border: "none",
+                          padding: 0,
+                          cursor: "pointer",
+                          font: "inherit",
+                          textAlign: "left",
+                        }}
+                      >
                         View Guide →
-                      </a>
+                      </button>
                     )}
                   </div>
                 ))}

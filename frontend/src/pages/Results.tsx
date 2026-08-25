@@ -1049,7 +1049,16 @@ function Finding({ tone, children }: { tone: "ok" | "warn" | "crit" | "info"; ch
   );
 }
 
-function ClinicalSummary({ report, detail }: { report: any; detail: any }) {
+/**
+ * The plain-language clinical summary.
+ *
+ * Exported because the assessment's review step renders it too: finishing an
+ * assessment used to show four tiles and a link, and the detail a patient had
+ * just spent ten minutes producing was a page change away. Sharing the
+ * component rather than copying it is what stops the two screens drifting into
+ * two different accounts of the same assessment.
+ */
+export function ClinicalSummary({ report, detail }: { report: any; detail: any }) {
   const { t } = useTranslation();
   const audiometry = report.audiometry ?? {};
   const psycho = report.psychoacoustics ?? {};

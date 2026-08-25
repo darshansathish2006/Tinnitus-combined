@@ -13,6 +13,7 @@
  */
 
 import React, { useEffect, useState, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   api,
   type GroupTherapySession,
@@ -26,6 +27,7 @@ import {
 import { useSession } from "../state/session";
 import { Loading, Panel, Fader, Meter, Readout, Chip, fmt } from "../components/ui";
 import { SpectrumBars } from "../components/charts";
+import { activityHref } from "../components/RehabProgramme";
 import { RELAXING_SOUNDS } from "../data/relaxingSounds";
 import { startTherapy, type TherapyBlock, type TherapyHandle } from "../audio/therapy";
 import { engine } from "../audio/engine";
@@ -44,6 +46,7 @@ const FEELING_EMOJIS = [
 
 export default function GroupTherapy() {
   const toast = useSession((s) => s.toast);
+  const navigate = useNavigate();
 
   // Hub & Sessions state
   const [sessions, setSessions] = useState<GroupTherapySession[]>([]);
@@ -1587,20 +1590,44 @@ export default function GroupTherapy() {
                                   </span>
                                 </div>
 
-                                <button
-                                  type="button"
-                                  className={`btn btn--sm ${isDone ? "btn--primary" : "btn--outline"}`}
-                                  disabled={rehabBusy.has(activity.key)}
-                                  onClick={() => toggleRehabActivity(activity)}
-                                  style={{
-                                    background: isDone ? "#10b981" : "transparent",
-                                    borderColor: isDone ? "#059669" : "rgba(148, 163, 184, 0.4)",
-                                    color: "#fff",
-                                    fontWeight: "bold",
-                                  }}
-                                >
-                                  {isDone ? "✓ Done" : "Mark Done"}
-                                </button>
+                                <div className="row row--tight row--nowrap">
+                                  {/* Every activity gets its own door, not just
+                                      the sound block. `activityHref` resolves
+                                      the key to where that activity is actually
+                                      performed — the player for the acoustic
+                                      ones, the daily check-in for the symptom
+                                      check, its own checklist row otherwise —
+                                      so the label is honest about the
+                                      destination for all nine of them. */}
+                                  <button
+                                    type="button"
+                                    className="btn btn--sm btn--outline"
+                                    aria-label={`Open ${activity.key.replace(/_/g, " ")} on the rehabilitation screen`}
+                                    onClick={() => navigate(activityHref(activity.key))}
+                                    style={{
+                                      borderColor: "rgba(148, 163, 184, 0.4)",
+                                      color: "#fff",
+                                      whiteSpace: "nowrap",
+                                    }}
+                                  >
+                                    Open →
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={`btn btn--sm ${isDone ? "btn--primary" : "btn--outline"}`}
+                                    disabled={rehabBusy.has(activity.key)}
+                                    onClick={() => toggleRehabActivity(activity)}
+                                    style={{
+                                      background: isDone ? "#10b981" : "transparent",
+                                      borderColor: isDone ? "#059669" : "rgba(148, 163, 184, 0.4)",
+                                      color: "#fff",
+                                      fontWeight: "bold",
+                                      whiteSpace: "nowrap",
+                                    }}
+                                  >
+                                    {isDone ? "✓ Done" : "Mark Done"}
+                                  </button>
+                                </div>
                               </li>
                             );
                           })}

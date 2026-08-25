@@ -453,6 +453,11 @@
       "why2": "Your assessment already contains everything guidelines require: history, hearing thresholds, and a validated handicap measure."
     },
     "review": {
+      "showDetailed": "View detailed results",
+      "hideDetailed": "Hide detailed results",
+      "detailedSub": "Your full clinical summary for this assessment: overall hearing, what it means, a 3D model of your own cochlea, the key findings, observations, risk indicators and what happens next.",
+      "buildingDetailed": "Building your detailed results…",
+      "fullReportNote": "The complete technical report — audiogram and calibration, every instrument score, the model's per-driver attributions and coding — is on your Results screen.",
       "readFirst": "Please read this first",
       "clinicianAlerted": "Your clinician has been alerted automatically.",
       "handicap": "Tinnitus handicap",
@@ -777,6 +782,17 @@
     "emergency": "emergency"
   },
   "consultation": {
+    "emailSubject": "EchoSense — {{name}} ({{mrn}})",
+    "cancelConsultation": "Cancel consultation",
+    "cancelTitle": "Cancel this consultation",
+    "cancelBody": "Your appointment will be cancelled and the slot released for another patient. It stays on your history, and your clinician is told why.",
+    "cancelReasonLabel": "Why are you cancelling?",
+    "cancelReasonPlaceholder": "For example: I have a work conflict, I am unwell, or my symptoms have changed.",
+    "cancelReasonRequired": "A reason is required — your clinician needs to know whether to offer you another time or to follow up sooner.",
+    "cancelReasonNote": "This is shared with your clinician and kept on the appointment record.",
+    "cancelKeep": "Keep the appointment",
+    "cancelConfirm": "Cancel consultation",
+    "cancelledBecause": "Reason: {{reason}}",
     "label": "Your care",
     "title": "Doctor consultation",
     "underCareOf": "Under the care of {{name}}",
@@ -1536,6 +1552,7 @@
       "adherence": "Adherence"
     },
     "appointments": {
+      "cancelledBecause": "Cancelled by patient — {{reason}}",
       "title": "Upcoming appointments",
       "loading": "Loading appointments",
       "emptyTitle": "Nothing scheduled",

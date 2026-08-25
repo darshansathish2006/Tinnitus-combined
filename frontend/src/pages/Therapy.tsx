@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { Trans, useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { api, ApiError, type Assessment } from "../api/client";
@@ -86,6 +86,7 @@ export default function Rehabilitation() {
   const { t } = useTranslation();
   const toast = useSession((s) => s.toast);
   const playerRef = useRef<HTMLDivElement>(null);
+  const { hash } = useLocation();
 
   // Fetched here rather than inside the programme component so that ticking an
   // activity and finishing a listening session refresh the same object — the
@@ -131,6 +132,35 @@ export default function Rehabilitation() {
     }
   }, []);
   const [generating, setGenerating] = useState(false);
+
+  /**
+   * Open the activity a deep link names.
+   *
+   * The group-therapy room lists this same programme and links each activity
+   * here as `/rehabilitation#activity-<key>`, or `#therapy-player` for the
+   * acoustic ones. Two things stop the browser doing this by itself: React
+   * Router changes the URL without a document navigation, so no fragment scroll
+   * is ever performed; and the checklist is not in the DOM until the programme
+   * request resolves, so there would be nothing to scroll to on the first paint
+   * even if one were.
+   *
+   * Hence the dependency on `programme.data` — the effect re-runs on the render
+   * that first mounts the target. Before that `getElementById` returns null and
+   * this does nothing, which is correct rather than a failed link.
+   */
+  useEffect(() => {
+    if (!hash) return;
+    const id = decodeURIComponent(hash.slice(1));
+    if (!id) return;
+    const raf = requestAnimationFrame(() => {
+      const target = document.getElementById(id);
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+      target.classList.add("rehab-target");
+      window.setTimeout(() => target.classList.remove("rehab-target"), 2200);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [hash, programme.data]);
 
   const [block, setBlock] = useState<TherapyBlock | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -420,6 +450,7 @@ export default function Rehabilitation() {
       {monitoring.data && (
         <>
           <hr className="rule" />
+          <div id="daily-monitoring" />
           <DailyMonitoring
             monitoring={monitoring.data}
             onChanged={() => {
@@ -430,7 +461,7 @@ export default function Rehabilitation() {
         </>
       )}
 
-      <div ref={playerRef} className="stack stack-2">
+      <div ref={playerRef} id="therapy-player" className="stack stack-2">
         <span className="label label--signal">{t("rehab.player.title")}</span>
         <p className="meta">{t("rehab.player.sub")}</p>
       </div>

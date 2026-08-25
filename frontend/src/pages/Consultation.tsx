@@ -27,6 +27,7 @@ import {
   EmptyState,
   ErrorState,
   Loading,
+  Modal,
   Panel,
   Readout,
   UrgencyChip,
@@ -49,7 +50,7 @@ import {
   IconCheck,
   IconClipboard,
   IconFile,
-  IconPhone,
+  IconMail,
   IconTarget,
   IconUser,
   IconWave,
@@ -58,19 +59,49 @@ import {
 export default function Consultation() {
   const { t } = useTranslation();
   const toast = useSession((s) => s.toast);
+  const session = useSession((s) => s.session);
   const data = useAsync(() => api.consultation.get(), []);
+  // Only for the mailto subject line — the MRN is what a clinical inbox files
+  // a message under, and the patient should not have to type it themselves.
+  const profile = useAsync(() => api.patients.me(), []);
 
   // The phase flips from "upcoming" to "imminent" to "live" with no user
   // action, so the screen refreshes itself as the appointment approaches.
   const nextAppointment = data.data?.upcoming?.[0] ?? null;
   useConsultationPolling(nextAppointment, data.reload);
   const [cancelling, setCancelling] = useState(false);
+  /**
+   * Cancellation is a two-step interaction, not a button.
+   *
+   * `cancelTarget` is the appointment id the dialog is open for — null when it
+   * is closed. Holding the id rather than a boolean means the dialog cannot
+   * cancel the wrong appointment if the list refreshes underneath it, which it
+   * does: this screen polls itself as an appointment approaches.
+   */
+  const [cancelTarget, setCancelTarget] = useState<number | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
 
-  async function cancel(appointmentId: number) {
+  const trimmedReason = cancelReason.trim();
+
+  function openCancel(appointmentId: number) {
+    setCancelTarget(appointmentId);
+    setCancelReason("");
+  }
+
+  function closeCancel() {
+    if (cancelling) return;
+    setCancelTarget(null);
+    setCancelReason("");
+  }
+
+  async function confirmCancel() {
+    if (cancelTarget === null || !trimmedReason) return;
     setCancelling(true);
     try {
-      await api.consultation.cancel(appointmentId);
+      await api.consultation.cancel(cancelTarget, trimmedReason);
       toast(t("consultation.cancelled"), "info");
+      setCancelTarget(null);
+      setCancelReason("");
       await data.reload();
     } catch (error) {
       toast(error instanceof ApiError ? error.message : t("consultation.cancelFailed"), "crit");
@@ -174,8 +205,25 @@ export default function Consultation() {
               <hr className="rule rule--tight" />
               <div className="row row--tight">
                 {clinician.email && (
-                  <a className="btn btn--sm" href={`mailto:${clinician.email}`}>
-                    <IconPhone size={14} />
+                  /* `mailto:` is the whole mechanism here and stays that way —
+                     there is no mail transport configured in this deployment,
+                     and inventing one would be a larger change than the problem
+                     warrants. Two things were wrong with it rather than one:
+                     the button carried a telephone glyph, and it opened a
+                     completely blank message, so a clinician receiving it had
+                     no idea which of their patients had written until they read
+                     to the end. The subject now names the patient and their
+                     MRN, which is what a clinical inbox is filed by. */
+                  <a
+                    className="btn btn--sm"
+                    href={`mailto:${clinician.email}?subject=${encodeURIComponent(
+                      t("consultation.emailSubject", {
+                        name: session?.full_name ?? "",
+                        mrn: profile.data?.mrn ?? "",
+                      })
+                    )}`}
+                  >
+                    <IconMail size={14} />
                     {t("consultation.emailClinician", {
                       name: clinician.name?.split(" ").slice(-1)[0] ?? "",
                     })}
@@ -204,10 +252,10 @@ export default function Consultation() {
                 <button
                   type="button"
                   className="btn btn--sm btn--ghost"
-                  onClick={() => void cancel(next.id)}
+                  onClick={() => openCancel(next.id)}
                   disabled={cancelling}
                 >
-                  {cancelling ? t("consultation.cancelling") : t("common.cancel")}
+                  {cancelling ? t("consultation.cancelling") : t("consultation.cancelConsultation")}
                 </button>
               }
             />
@@ -387,9 +435,21 @@ export default function Consultation() {
                         </td>
                         <td className="meta">{modalityLabel(t, appointment.modality)}</td>
                         <td>
-                          <Chip tone={STATUS_TONE[appointment.status] ?? "ghost"}>
-                            {appointmentStatusLabel(t, appointment.status)}
-                          </Chip>
+                          <div className="stack stack-1">
+                            <Chip tone={STATUS_TONE[appointment.status] ?? "ghost"}>
+                              {appointmentStatusLabel(t, appointment.status)}
+                            </Chip>
+                            {/* The reason belongs beside the status, not behind
+                                a click: the whole point of requiring one is
+                                that the record explains itself later. */}
+                            {appointment.status === "cancelled" && appointment.cancellation_reason && (
+                              <span className="meta" style={{ fontSize: "var(--fs-micro)" }}>
+                                {t("consultation.cancelledBecause", {
+                                  reason: appointment.cancellation_reason,
+                                })}
+                              </span>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -487,6 +547,55 @@ export default function Consultation() {
           </Panel>
         </aside>
       </div>
+
+      {/* -- cancel, with a reason ------------------------------------------ */}
+      {/* A dialog rather than an inline confirm, because two things have to
+          happen before the slot is given back and neither is a yes/no: the
+          patient has to mean it, and the clinician has to be told why. The
+          confirm button stays disabled until there is something to send, so the
+          rule is visible in the interface rather than only discovered as a
+          server error. The record is kept either way — cancelling moves the
+          appointment's status, it does not delete it. */}
+      <Modal
+        open={cancelTarget !== null}
+        onClose={closeCancel}
+        title={t("consultation.cancelTitle")}
+        footer={
+          <>
+            <button type="button" className="btn btn--sm" onClick={closeCancel} disabled={cancelling}>
+              {t("consultation.cancelKeep")}
+            </button>
+            <button
+              type="button"
+              className="btn btn--sm btn--primary"
+              onClick={() => void confirmCancel()}
+              disabled={cancelling || !trimmedReason}
+            >
+              {cancelling ? t("consultation.cancelling") : t("consultation.cancelConfirm")}
+            </button>
+          </>
+        }
+      >
+        <div className="stack stack-3">
+          <p style={{ fontSize: "var(--fs-small)", lineHeight: 1.6 }}>{t("consultation.cancelBody")}</p>
+          <label className="stack stack-1">
+            <span className="label">{t("consultation.cancelReasonLabel")}</span>
+            <textarea
+              className="input"
+              rows={3}
+              autoFocus
+              maxLength={2000}
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              placeholder={t("consultation.cancelReasonPlaceholder")}
+              aria-describedby="cancel-reason-note"
+            />
+          </label>
+          <p id="cancel-reason-note" className="meta">
+            {trimmedReason ? t("consultation.cancelReasonNote") : t("consultation.cancelReasonRequired")}
+          </p>
+        </div>
+      </Modal>
     </div>
   );
 }

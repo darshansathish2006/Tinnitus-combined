@@ -639,6 +639,9 @@ export interface ConsultationAppointment {
   can_join: boolean;
   join_opens_at: string | null;
   is_online: boolean;
+  /** Why the patient cancelled. Empty on everything that is not cancelled. */
+  cancellation_reason: string;
+  cancelled_at: string | null;
 }
 
 export interface ClinicianSchedule {
@@ -1036,8 +1039,20 @@ export const api = {
       ),
     request: (body: Record<string, unknown>) =>
       request<ConsultationAppointment>("/api/consultation/request", { method: "POST", body }),
-    cancel: (appointmentId: number) =>
-      request<ConsultationAppointment>(`/api/consultation/${appointmentId}/cancel`, { method: "POST" }),
+    /**
+     * Cancel one's own upcoming appointment.
+     *
+     * `reason` is not optional. The server refuses an empty one — the clinician
+     * being handed the slot back needs to know why, and "cancelled" on its own
+     * is the version of that message they cannot act on. Required in the
+     * signature as well so a caller cannot forget it and discover the rule as a
+     * 400 at runtime.
+     */
+    cancel: (appointmentId: number, reason: string) =>
+      request<ConsultationAppointment>(`/api/consultation/${appointmentId}/cancel`, {
+        method: "POST",
+        body: { reason },
+      }),
   },
 
   /**

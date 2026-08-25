@@ -1957,6 +1957,56 @@ code, kbd, .mono {
 .toast--crit { border-left-color: var(--crit); }
 .toast--ok { border-left-color: var(--ok); }
 
+/* ==========================================================================
+   Guide — deep-link targets
+   --------------------------------------------------------------------------
+   A resource elsewhere in the app can link to one entry inside the guide
+   (`/guide#community-resources`). Two things are needed for that to land well.
+
+   `scroll-margin-top` keeps the target clear of the sticky top bar, which
+   would otherwise cover the first line of whatever you just navigated to.
+
+   The highlight exists because scrolling alone is ambiguous: the reader asked
+   for one paragraph and got a page of paragraphs, with no indication of which
+   one answered them. It fades out on its own rather than persisting, and it is
+   suppressed under `prefers-reduced-motion` along with the transition.
+   ========================================================================== */
+.guide-target {
+  outline: none;
+  /* Applied by the guide before it scrolls, so the target clears the sticky
+     top bar instead of arriving underneath it. */
+  scroll-margin-top: calc(58px + var(--s5));
+  animation: guide-target-flash 2.2s ease-out;
+}
+@keyframes guide-target-flash {
+  0%, 55% {
+    border-color: var(--signal);
+    box-shadow: 0 0 0 3px var(--signal-subtle);
+  }
+  100% {
+    border-color: var(--line);
+    box-shadow: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guide-target { animation: none; border-color: var(--signal); }
+}
+
+/* The same treatment for the rehabilitation programme, which the group-therapy
+   room deep-links into one activity at a time. A checklist row is a `li`, not a
+   panel, so it gets its own rule rather than sharing the one above. */
+.rehab-target {
+  scroll-margin-top: calc(58px + var(--s5));
+  animation: rehab-target-flash 2.2s ease-out;
+}
+@keyframes rehab-target-flash {
+  0%, 55% { box-shadow: 0 0 0 3px var(--signal-subtle); border-color: var(--signal); }
+  100% { box-shadow: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rehab-target { animation: none; box-shadow: 0 0 0 3px var(--signal-subtle); }
+}
+
 /* Print.
 
    Paper is white whatever the screen theme is, so the dark palette has to be

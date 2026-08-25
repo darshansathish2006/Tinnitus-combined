@@ -52,6 +52,8 @@ import {
   useAsync,
 } from "../components/ui";
 import { Audiogram, Fingerprint, RadialGauge } from "../components/charts";
+import { IconChevronRight, IconFile } from "../components/icons";
+import { ClinicalSummary } from "./Results";
 import Calibration, { type CalibrationResult } from "./assessment/Calibration";
 import Audiometry, { type AudiometryResult } from "./assessment/Audiometry";
 import TinnitusMatch, { type MatchResult } from "./assessment/TinnitusMatch";
@@ -889,6 +891,29 @@ function ReviewStep({
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+
+  /**
+   * The detailed report for *this* assessment, on this page.
+   *
+   * Finishing an assessment used to end at four tiles and a link to Results.
+   * The detail is fetched here instead, from the same `/api/reports/clinical`
+   * endpoint the Results screen uses, pinned to this assessment's id rather
+   * than to "the patient's latest" — during the seconds after finalising, the
+   * two are the same row, but pinning it means the section can never render a
+   * different assessment's numbers under this one's heading.
+   *
+   * Declared above the loading guard below because it is a hook: reading
+   * `assessment.id` first and calling `useAsync` after the early return would
+   * change the hook count between the loading render and the loaded one.
+   */
+  const [showDetail, setShowDetail] = useState(false);
+  const assessmentId = assessment?.id ?? null;
+  const isComplete = assessment?.status === "complete";
+  const report = useAsync(
+    () => (assessmentId && isComplete ? api.reports.clinical(assessmentId) : Promise.resolve(null)),
+    [assessmentId, isComplete]
+  );
+
   if (!assessment || !analysis) return <Loading label={t("assessment.workingOutResults")} />;
 
   const tri = analysis.derived?.tri ?? {};
@@ -1100,6 +1125,69 @@ function ReviewStep({
           )}
         </div>
       </div>
+
+      {/* ============================================ detailed results === */}
+      {/* Below the basic result, not instead of it. Everything above this rule
+          is unchanged: the four tiles, the reference level, the audiogram, what
+          we found, what to expect, the reactivity gauge and the plan card are
+          the answer for somebody who wants one screen and then to get on with
+          their day. This is for the person who wants the rest of it, and it is
+          the same clinical summary the Results screen renders, from the same
+          endpoint, for this assessment — not a second version of it.
+
+          Behind a toggle for the same reason Results puts it behind one: a
+          patient who has just finished ten minutes of testing should not have
+          to scroll past a full clinical report to reach "start therapy". */}
+      {isComplete && (
+        <>
+          <hr className="rule" />
+
+          <button
+            type="button"
+            className="reveal no-print"
+            aria-expanded={showDetail}
+            aria-controls="assessment-detailed-results"
+            onClick={() => setShowDetail((v) => !v)}
+          >
+            <IconChevronRight size={18} className="reveal__chev" />
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <strong style={{ display: "block", fontSize: "var(--fs-body)" }}>
+                {t(showDetail ? "assessment.review.hideDetailed" : "assessment.review.showDetailed")}
+              </strong>
+              <span className="meta">{t("assessment.review.detailedSub")}</span>
+            </span>
+            <IconFile size={18} style={{ flex: "none", color: "var(--ink-3)" }} />
+          </button>
+
+          {showDetail && (
+            <div id="assessment-detailed-results" className="stack stack-5 fade-in">
+              {report.loading ? (
+                <Loading label={t("assessment.review.buildingDetailed")} rows={4} />
+              ) : report.error ? (
+                <ErrorState error={report.error} retry={report.reload} />
+              ) : report.data ? (
+                <>
+                  <ClinicalSummary report={report.data} detail={analysis} />
+                  <Panel tone="sunken" tight>
+                    <div className="row row--between row--nowrap">
+                      <p className="meta" style={{ margin: 0 }}>
+                        {t("assessment.review.fullReportNote")}
+                      </p>
+                      <button
+                        type="button"
+                        className="btn btn--sm"
+                        onClick={() => navigate("/results")}
+                      >
+                        {t("assessment.review.seeFullReport")}
+                      </button>
+                    </div>
+                  </Panel>
+                </>
+              ) : null}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

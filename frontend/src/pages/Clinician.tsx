@@ -10,7 +10,7 @@
  * interrogate is a ranking they will stop trusting.
  */
 
-import { Fragment, lazy, Suspense, useMemo, useState } from "react";
+import { Fragment, lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
@@ -146,6 +146,44 @@ export default function Clinician() {
     }
   }
   const appointments = useAsync(() => api.clinician.appointments(true), []);
+
+  /**
+   * Keep the appointment list current while the console is open.
+   *
+   * `useAsync` fetches once per dependency change, and this call has no
+   * dependencies — so the list was a snapshot taken at mount. Patients book and
+   * cancel from their own screens all day, and a clinician who leaves the
+   * console open (which is the normal way to use it) was reading a list that
+   * had stopped being true hours earlier: a slot requested at 09:05 was invisible
+   * until they happened to reload the page.
+   *
+   * Two triggers, because they cover different halves of the problem:
+   *
+   *  - **On focus / tab visible.** The common case is a clinician switching to
+   *    another window and coming back. Refreshing then is immediate and costs
+   *    one request per return, rather than one every interval regardless.
+   *  - **A slow interval.** For the console left in the foreground on a second
+   *    monitor, which never fires a focus event. Ninety seconds is well inside
+   *    the time it takes to act on a booking and is not a load concern for a
+   *    single caseload query.
+   *
+   * `reload` is a stable `useCallback` from `useAsync`, so this subscribes once
+   * rather than re-subscribing on every render.
+   */
+  const reloadAppointments = appointments.reload;
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "visible") reloadAppointments();
+    };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    const id = window.setInterval(refresh, 90_000);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+      window.clearInterval(id);
+    };
+  }, [reloadAppointments]);
 
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
@@ -746,6 +784,18 @@ function AppointmentsPanel({
                     {fmt.dateTime(appointment.scheduled_for)} ·{" "}
                     {fmt.duration(appointment.duration_minutes)} · {modalityLabel(t, appointment.modality)}
                   </span>
+                  {/* A cancellation the clinician cannot see the reason for is
+                      a slot that came back with no explanation. "My symptoms
+                      got worse" and "I double-booked myself" are the same
+                      status and opposite clinical responses, which is why the
+                      patient is required to give one. */}
+                  {appointment.status === "cancelled" && appointment.cancellation_reason && (
+                    <span className="meta" style={{ color: "var(--crit-ink)" }}>
+                      {t("clinician.appointments.cancelledBecause", {
+                        reason: appointment.cancellation_reason,
+                      })}
+                    </span>
+                  )}
                 </div>
                 <div className="row row--tight row--nowrap">
                   {appointment.status === "requested" && (

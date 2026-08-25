@@ -22,6 +22,34 @@ import { useSession } from "../state/session";
 import { Chip, EmptyState, Meter, Panel, Readout, fmt } from "./ui";
 import { IconArrowRight, IconCheck, IconClipboard, IconSpark, IconWave } from "./icons";
 
+/**
+ * Where each rehabilitation activity is *done*, as a fragment on
+ * `/rehabilitation`.
+ *
+ * Three of the nine are acoustic and are performed in the player, so they all
+ * resolve to it rather than to their own checklist row — sending someone to a
+ * line of text that says "sound therapy, 20 min" when they asked to start it is
+ * the kind of link that trains people to stop following links. The symptom
+ * check is done in the daily-monitoring block, for the same reason. The rest
+ * are self-directed exercises whose row *is* the instruction, so the row is the
+ * right destination.
+ *
+ * Exported because the group-therapy room lists the same programme and has to
+ * agree with this screen about where each activity lives; two copies of this
+ * map would drift the first time an activity moved.
+ */
+export const ACTIVITY_ANCHOR: Record<string, string> = {
+  sound_therapy: "therapy-player",
+  sound_enrichment: "therapy-player",
+  listening_practice: "therapy-player",
+  symptom_check: "daily-monitoring",
+};
+
+/** The `/rehabilitation` URL that opens one activity where it is performed. */
+export function activityHref(key: string): string {
+  return `/rehabilitation#${ACTIVITY_ANCHOR[key] ?? `activity-${key}`}`;
+}
+
 /** Tone for the severity chip. Mirrors the bands the report uses. */
 const BAND_TONE: Record<string, "ok" | "warn" | "crit" | "ghost"> = {
   slight: "ok",
@@ -146,7 +174,11 @@ export function RehabProgramme({
             {today.map((activity) => {
               const done = doneToday.has(activity.key);
               return (
-                <li key={activity.key} className={`rehabitem${done ? " rehabitem--done" : ""}`}>
+                <li
+                  key={activity.key}
+                  id={`activity-${activity.key}`}
+                  className={`rehabitem${done ? " rehabitem--done" : ""}`}
+                >
                   <button
                     type="button"
                     className="rehabitem__tick"

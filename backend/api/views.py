@@ -339,24 +339,33 @@ def _build_my_community_response(user: User, request) -> Response:
             "online_count": online_cnt,
         })
 
+    # Each resource points at the *paragraph* in the guide that explains it, not
+    # at the screen it is about. "Understanding sound therapy" used to open the
+    # therapy player, which is the thing you use once you already understand it;
+    # the CBT entry opened the guide's front page and left the reader to find
+    # the relevant part themselves; and the guidelines entry had no link at all,
+    # so the one resource that is purely documentation was the one you could not
+    # read. The fragments are entry anchors in `frontend/src/pages/Guide.tsx` —
+    # `Guide` scrolls to them on arrival, including when the reader comes from
+    # another route.
     resources = [
         {
             "id": 1,
             "title": "Understanding Sound Therapy & Habituation",
             "category": "Sound Therapy",
-            "link": "/rehabilitation",
+            "link": "/guide#therapy-sound-types",
         },
         {
             "id": 2,
             "title": "Cognitive Reframing for Tinnitus Stress",
             "category": "CBT",
-            "link": "/guide",
+            "link": "/guide#support-reframing",
         },
         {
             "id": 3,
             "title": "Local Support Group Guidelines & Patient Privacy",
             "category": "Community Guidelines",
-            "link": None,
+            "link": "/guide#community-privacy",
         },
     ]
 
@@ -2041,6 +2050,10 @@ def _appointment_payload(appointment: Appointment, *, reveal_link: bool = False)
         # this rather than from `scheduled_for`, so a drifted clock shifts the
         # countdown by its drift instead of changing which phase is shown.
         "starts_in_seconds": starts_in,
+        # Carried on every appointment rather than only cancelled ones, so both
+        # surfaces can render "cancelled - <reason>" from one payload shape.
+        "cancellation_reason": appointment.cancellation_reason,
+        "cancelled_at": appointment.cancelled_at.isoformat() if appointment.cancelled_at else None,
     }
 
 
@@ -2395,7 +2408,18 @@ def consultation_request(request):
 
 @api_view(["POST"])
 def consultation_cancel(request, appointment_id: int):
-    """Cancel one's own upcoming appointment, freeing the slot for someone else."""
+    """Cancel one's own upcoming appointment, freeing the slot for someone else.
+
+    A reason is **required**, not optional. The clinician on the other side of
+    the slot is told it has been given back, and "cancelled" with no account of
+    why is the version of that message they cannot act on - "my symptoms got
+    worse" and "I double-booked myself" call for opposite responses. Refused
+    server-side rather than only in the form, because the form is not the only
+    way to reach this endpoint.
+
+    The row is updated, never deleted: a cancelled consultation stays in the
+    patient's history and in the clinician's list, distinguishable by `status`.
+    """
     patient = resolve_patient(request)
     appointment = Appointment.objects.filter(pk=appointment_id, patient=patient).first()
     if appointment is None:
@@ -2404,10 +2428,30 @@ def consultation_cancel(request, appointment_id: int):
         return Response(
             {"detail": "That appointment has already passed."}, status=status.HTTP_400_BAD_REQUEST
         )
+    if appointment.status == "cancelled":
+        return Response(
+            {"detail": "That appointment is already cancelled."}, status=status.HTTP_400_BAD_REQUEST
+        )
+
+    reason = str(request.data.get("reason") or "").strip()
+    if not reason:
+        return Response(
+            {"detail": "Tell your clinician why you are cancelling before confirming."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
     appointment.status = "cancelled"
-    appointment.save(update_fields=["status"])
-    audit(request, "consultation.cancel", "appointment", appointment.id, patient_id=patient.id)
+    appointment.cancellation_reason = reason[:2000]
+    appointment.cancelled_at = timezone.now()
+    appointment.save(update_fields=["status", "cancellation_reason", "cancelled_at"])
+    audit(
+        request,
+        "consultation.cancel",
+        "appointment",
+        appointment.id,
+        patient_id=patient.id,
+        clinician_id=appointment.clinician_id,
+    )
     return Response(_appointment_payload(appointment))
 
 

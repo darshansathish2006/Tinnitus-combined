@@ -134,6 +134,12 @@ export const IconPhone = (p: IconProps) => (
     <path d="M6.5 3.5h3l1.5 4-2 1.4a12 12 0 0 0 6.1 6.1l1.4-2 4 1.5v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4.5 5.7a2 2 0 0 1 2-2.2Z" />
   </Base>
 );
+export const IconMail = (p: IconProps) => (
+  <Base {...p}>
+    <rect x="3" y="5" width="18" height="14" rx="2" />
+    <path d="m3.5 7 8.5 6 8.5-6" />
+  </Base>
+);
 export const IconGlobe = (p: IconProps) => (
   <Base {...p}>
     <circle cx="12" cy="12" r="9" /><path d="M3 12h18" />

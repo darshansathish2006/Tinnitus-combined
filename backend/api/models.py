@@ -503,6 +503,16 @@ class Appointment(models.Model):
     # Set by the clinician before the consultation. Blank means "not issued yet",
     # which the patient-facing screen reports rather than hiding.
     meeting_link = models.URLField(blank=True, default="")
+    # -- cancellation ------------------------------------------------------- #
+    # A cancelled consultation is *kept*, never deleted. The clinician needs to
+    # see that a slot they were holding has been given back and why, and a
+    # patient who cancels three times running is clinical information. `status`
+    # already carries "cancelled"; these two carry the account of it.
+    #
+    # A blank reason is only reachable on rows cancelled before this field
+    # existed - the cancel endpoint refuses an empty one.
+    cancellation_reason = models.TextField(blank=True, default="")
+    cancelled_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "appointments"

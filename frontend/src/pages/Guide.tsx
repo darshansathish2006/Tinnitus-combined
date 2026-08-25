@@ -10,8 +10,8 @@
  * the app, not in the repository.
  */
 
-import { useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Trans, useTranslation } from "react-i18next";
 import { useSession } from "../state/session";
 import { Chip, Disclosure, Panel } from "../components/ui";
@@ -26,8 +26,10 @@ import {
   IconEar,
   IconShield,
   IconSpark,
+  IconMeditate,
   IconTrend,
   IconUser,
+  IconUsers,
   IconWave,
 } from "../components/icons";
 
@@ -67,7 +69,13 @@ interface Section {
   route?: string;
   audience: Audience | "both";
   intro: string;
-  entries: { label: string; entry: Entry }[];
+  /**
+   * `anchor`, where present, is a stable id rendered onto that entry's card so
+   * something outside the guide can link *to the paragraph* rather than to the
+   * top of a section and a scroll hunt. Only entries that are actually linked
+   * carry one — an id nothing points at is a maintenance liability.
+   */
+  entries: { label: string; entry: Entry; anchor?: string }[];
 }
 
 const SECTIONS: Section[] = [
@@ -255,6 +263,7 @@ const SECTIONS: Section[] = [
         },
       },
       {
+        anchor: "therapy-sound-types",
         label: "The 15 sound types",
         entry: {
           what: "Notched noise and music, broadband enrichment, partial masking, white/pink/brown noise, ocean surf, rainfall, forest ambience, fractal tones, modulated flanking noise, coordinated-reset tones, bimodal sound-plus-haptic, binaural relaxation, paced breathing, overnight fade, and residual-inhibition bursts.",
@@ -357,6 +366,7 @@ const SECTIONS: Section[] = [
       "An assistant that knows your results, available at any hour, in English, Tamil, Hindi, Telugu, Spanish or French.",
     entries: [
       {
+        anchor: "support-reframing",
         label: "What it can help with",
         entry: {
           what: "Explaining your results, sleep, breathing exercises, working through a difficult thought, how to use your therapy, hearing protection, medication questions.",
@@ -385,6 +395,156 @@ const SECTIONS: Section[] = [
             "Crisis and red-flag routing is deterministic and runs before any language model is consulted, so an urgent disclosure always produces the same correct response and always raises a critical alert. It is never delegated to a model's judgement.",
           limit:
             "It does not diagnose, does not prescribe, and does not replace your audiologist. In an emergency, contact emergency services.",
+        },
+      },
+    ],
+  },
+
+  /* =========================================================== community === */
+  {
+    id: "community",
+    icon: IconUsers,
+    title: "Community",
+    route: "/community",
+    audience: "both",
+    intro:
+      "A feed, a chatbox and a short reading list, shared with other patients in your own city. Optional, and opt-in.",
+    entries: [
+      {
+        anchor: "community-location",
+        label: "How your community is chosen",
+        entry: {
+          what: "By where you live. Your registered country, state and city put you in the community for that city, alongside other EchoSense patients in the same place.",
+          how: "Change the city on your Settings screen and you move to that city's community — there is a shortcut to Settings in the left-hand column of the Community screen. If you have never set a location, one is filled in for you so the screen has something to show rather than blocking you at a form.",
+          clinical:
+            "Communities are created lazily on first access from the user's country/state/city triple, so a city with a single patient still resolves to a real community rather than an error state.",
+        },
+      },
+      {
+        anchor: "community-joining",
+        label: "Joining is a decision you make, and can unmake",
+        entry: {
+          what: "The first time you open Community you are told which one you belong to and asked whether you want to join. Until you say yes you see the invitation and nothing else — no posts, no chat, no member list.",
+          how: "That is deliberate: a support feed you were enrolled in without being asked is not support. Nothing you write is visible to anyone until you have joined.",
+          limit:
+            "Other patients in your city can see your name on anything you post. This is a community of people with the same condition, not an anonymous board — write accordingly.",
+        },
+      },
+      {
+        anchor: "community-posts",
+        label: "Posts, hashtags, likes and replies",
+        entry: {
+          what: "Write a post, and other people in your city can like it, comment on it and reply to those comments. Hashtags you type into a post become filters in the left-hand column, so #sleep collects everything anyone has written about sleep.",
+          how: "The trending list counts how many posts carry each tag, and All is always the way back. You can delete your own posts and your own comments; you cannot delete anyone else's.",
+        },
+      },
+      {
+        anchor: "community-chat",
+        label: "The community chatbox",
+        entry: {
+          what: "A live conversation for the whole city community, beside the feed, with a count of how many people are currently online.",
+          how: "Messages carry read status, so you can see who has read yours. Online means active in the last five minutes, so the number moves through the day rather than counting everyone who ever registered.",
+          limit:
+            "It is not monitored by clinicians and nobody is on call in it. If something is urgent, use the crisis numbers on the Everyday Assistant Companion screen, or contact emergency services.",
+        },
+      },
+      {
+        anchor: "community-resources",
+        label: "Community resources",
+        entry: {
+          what: "A short reading list in the left-hand column of the Community screen. Each item opens the exact part of this guide that explains it, rather than dropping you at the top of a screen to find it yourself.",
+          how: "Sound therapy and habituation, cognitive reframing for tinnitus stress, and the guidelines and privacy note for the community itself. They are pointers into documentation you already have, so there is one explanation of each thing rather than two that can drift apart.",
+        },
+      },
+      {
+        anchor: "community-privacy",
+        label: "Guidelines and privacy",
+        entry: {
+          what: "Everything you post, comment or send in the chatbox is visible to other patients in your city community under your own name. None of it is part of your clinical record, and none of it is read by your clinician.",
+          how: "The clinical record is built from validated instruments; a community post is not one of those and is never mixed into it. The reverse holds too — your scores, your audiogram and your therapy plan are never shown to the community.",
+          limit:
+            "Other members are patients, not clinicians. Treat what you read here as experience rather than as medical advice, and take anything that matters to your own clinician.",
+        },
+      },
+    ],
+  },
+
+  /* ======================================================= group therapy === */
+  {
+    id: "grouptherapy",
+    icon: IconMeditate,
+    title: "Group therapy",
+    route: "/group-therapy",
+    audience: "both",
+    intro:
+      "A private room you and a few other patients share for a session: a video call, a chatbox, and six activities you work through at the same time.",
+    entries: [
+      {
+        anchor: "group-create",
+        label: "Creating a room",
+        entry: {
+          what: "Create a session and you get a video meeting link and a permanent six-character invite code. You are the host of that room.",
+          how: "The code does not expire and does not change, so the same group can use the same code week after week rather than passing round a new link every time.",
+        },
+      },
+      {
+        anchor: "group-join",
+        label: "Joining with an invite code, and host approval",
+        entry: {
+          what: "Enter someone's six-character code to ask to join. The host sees your request and approves or declines it before you are let in.",
+          how: "Approval is not a formality. A tinnitus support room is a place people say difficult things, and a code that has been forwarded twice should not be enough on its own. Your request updates by itself once the host answers — you do not need to reload.",
+        },
+      },
+      {
+        anchor: "group-activities",
+        label: "The six group activities",
+        entry: {
+          what: "Sync breathing, mood radar, a reflection prompt, a gratitude wall, sound therapy, and your own rehab progress — as tabs underneath the chatbox.",
+          how: "They run alongside the video call rather than replacing it. The point of doing them together is that the hardest part of a daily programme is doing it at all, and a room of people doing it at the same time is the oldest fix for that there is.",
+        },
+      },
+      {
+        anchor: "group-breathing",
+        label: "Sync breathing and the group masking synthesiser",
+        entry: {
+          what: "A breathing circle that expands and contracts through inhale, hold and exhale for everyone at once, with a masking sound you can play behind it — notch, pink or broadband white.",
+          how: "Paced breathing targets the stress that amplifies tinnitus rather than the tinnitus itself, which is why it belongs in the same programme as the sound blocks. The masker here is a background for the session; your prescribed level and your own notch live in your therapy player.",
+          limit:
+            "The group masker is not calibrated against your hearing thresholds the way your prescription is. Set it by ear, and keep it quiet enough that you can still hear your own tinnitus.",
+        },
+      },
+      {
+        anchor: "group-mood",
+        label: "Mood radar and the reflection prompt",
+        entry: {
+          what: "Submit your current distress from 1 to 10 and the room shows its average. The reflection prompt puts a question to the group and collects the answers underneath.",
+          how: "The room average is the useful part. Seeing that everyone is at 6 tonight is the fastest way to learn that a bad evening is a normal evening rather than a relapse.",
+        },
+      },
+      {
+        anchor: "group-sound",
+        label: "Sound therapy in a group session",
+        entry: {
+          what: "A shared library of relaxing sounds the room can listen to together, with a level fader and a live spectrum display.",
+          how: "This is companionship around the therapy, not a substitute for it. Your prescribed blocks, your daily minutes target and the before/after ratings that drive adaptation are all on the Rehabilitation screen.",
+        },
+      },
+      {
+        anchor: "group-rehab",
+        label: "Your rehab progress inside the session",
+        entry: {
+          what: "The sixth tab shows your own programme — today's tasks, your streak, your weekly and overall completion, and today's checklist — so you can tick activities off without leaving the room.",
+          how: "It is your real programme, read from the same record as the Rehabilitation screen rather than a copy of it. Every item on the checklist carries a button that opens that activity on the Rehabilitation screen, and ticking something here ticks it there.",
+          limit:
+            "Nobody else in the room can see your programme, your scores or your checklist. This tab is yours.",
+        },
+      },
+      {
+        anchor: "group-leave",
+        label: "Leaving a room, and closing one",
+        entry: {
+          what: "Anyone can leave a room at any time. The host can delete it, which closes it for everybody.",
+          how: "Leaving does not remove what you wrote during the session for the people still in it. If you host a room and delete it, the invite code stops working.",
         },
       },
     ],
@@ -692,6 +852,49 @@ export default function Guide() {
   const [watchNonce, setWatchNonce] = useState(0);
 
   /**
+   * Scroll to the entry a deep link names.
+   *
+   * The contents sidebar uses plain `#id` links, which the browser resolves for
+   * free because the target is already on screen. Arriving from *another route*
+   * is the case that did not work: React Router changes the URL without a
+   * document navigation, so the browser never performs its own fragment scroll,
+   * and even if it did the section would not be in the DOM yet on the first
+   * paint. So the scroll is done here, after the render that mounts the target.
+   *
+   * `requestAnimationFrame` rather than a timeout: one frame is exactly how long
+   * it takes for the freshly committed section to have a layout box to scroll
+   * to, and a timeout would either be too early or an arbitrary wait.
+   *
+   * Runs on every hash change, not just on mount, so clicking a second resource
+   * while already on the guide moves the page rather than doing nothing.
+   */
+  const { hash } = useLocation();
+  useEffect(() => {
+    if (!hash) return;
+    const id = decodeURIComponent(hash.slice(1));
+    if (!id) return;
+    const frame = requestAnimationFrame(() => {
+      const target = document.getElementById(id);
+      if (!target) return;
+      // The class goes on *before* the scroll, not after: it carries the
+      // `scroll-margin-top` that keeps the target clear of the sticky top bar,
+      // and a margin applied after the scroll has already happened does nothing.
+      target.classList.add("guide-target");
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+      // A card is not a heading, so nothing about landing on it is otherwise
+      // visible. Focusing it announces the arrival to a screen reader; the class
+      // gives a sighted reader the same information.
+      target.setAttribute("tabindex", "-1");
+      target.focus({ preventScroll: true });
+      window.setTimeout(() => target.classList.remove("guide-target"), 2200);
+    });
+    return () => cancelAnimationFrame(frame);
+    // `audience` is in the deps because switching to the clinician view remounts
+    // the sections; a hash pointing into a section that has just appeared should
+    // still be honoured.
+  }, [hash, audience]);
+
+  /**
    * Replay the whole onboarding sequence: video, then the guided tour.
    *
    * Clears the completion flag and reloads, which is the only way to re-enter
@@ -816,8 +1019,8 @@ export default function Guide() {
               </div>
 
               <div className="stack stack-3">
-                {section.entries.map(({ label, entry }, index) => (
-                  <Panel key={label} tight>
+                {section.entries.map(({ label, entry, anchor }, index) => (
+                  <Panel key={label} id={anchor} tight>
                     <div className="stack stack-3">
                       <strong style={{ fontSize: "var(--fs-body)" }}>
                         {entryText(section, index, "label", label)}

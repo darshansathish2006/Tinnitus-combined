@@ -241,9 +241,16 @@ export default function PatientHome() {
   if (profile.error) return <ErrorState error={profile.error} retry={profile.reload} />;
 
   const firstName = (actingName ?? session?.full_name ?? "").split(" ")[0];
+  // `/api/assessments` is ordered `-created_at`, so index 0 is the most recent
+  // and index 1 is the one before it. This used to read from the *end* of the
+  // list, which meant "last checked" quoted the patient's first ever
+  // assessment and the comparison panel ran the two oldest ones backwards —
+  // reporting an improvement as a deterioration for anyone with three or more
+  // on file. The Results screen has always read `completed[0]`; this now agrees
+  // with it, so both screens describe the same assessment.
   const completed = (assessments.data ?? []).filter((row) => row.status === "complete");
-  const assessment = completed.length > 0 ? completed[completed.length - 1] : null;
-  const previous = completed.length > 1 ? completed[completed.length - 2] : null;
+  const assessment = completed.length > 0 ? completed[0] : null;
+  const previous = completed.length > 1 ? completed[1] : null;
   const nextAppointment = consultation.data?.upcoming[0] ?? null;
   const quoteIndex = quoteIndexForToday();
 
