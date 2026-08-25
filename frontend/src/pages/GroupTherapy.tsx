@@ -28,9 +28,25 @@ import { useSession } from "../state/session";
 import { Loading, Panel, Fader, Meter, Readout, Chip, fmt } from "../components/ui";
 import { SpectrumBars } from "../components/charts";
 import { activityHref } from "../components/RehabProgramme";
+import { useTranslation } from "react-i18next";
 import { RELAXING_SOUNDS } from "../data/relaxingSounds";
 import { startTherapy, type TherapyBlock, type TherapyHandle } from "../audio/therapy";
 import { engine } from "../audio/engine";
+
+/**
+ * A rehabilitation activity's name, from the same catalogue the Rehabilitation
+ * screen reads.
+ *
+ * The checklist used to print the storage key with its underscores swapped for
+ * spaces — "SOUND ENRICHMENT", "SLEEP ROUTINE" — which is the database's name
+ * for the activity rather than the patient's, and untranslated in a product
+ * that ships in three languages. The `defaultValue` keeps the old rendering as
+ * the fallback, so an activity added to the backend before its translation
+ * lands still shows something sensible instead of a raw key.
+ */
+function rehabActivityLabel(t: (k: string, o?: Record<string, unknown>) => string, key: string): string {
+  return t(`rehab.activity.${key}`, { defaultValue: key.replace(/_/g, " ") });
+}
 
 // Emoji Feelings Palette for Quick Reactions
 const FEELING_EMOJIS = [
@@ -47,6 +63,7 @@ const FEELING_EMOJIS = [
 export default function GroupTherapy() {
   const toast = useSession((s) => s.toast);
   const navigate = useNavigate();
+  const { t } = useTranslation();
 
   // Hub & Sessions state
   const [sessions, setSessions] = useState<GroupTherapySession[]>([]);
@@ -628,6 +645,21 @@ export default function GroupTherapy() {
   // Filter reflection answers for displaying under chat
   const reflectionAnswers = activityResponses.filter((r) => r.activity_type === "reflection_prompt");
 
+  /**
+   * Two totals the assigned checklist reports on itself.
+   *
+   * Derived from `rehabData` rather than stored, so they cannot drift from the
+   * list they summarise — ticking an activity re-fetches the programme and both
+   * numbers follow. Guarded for the null programme (no assessment yet), because
+   * they are computed above the branch that checks for it.
+   */
+  const totalRehabMinutes = (rehabData?.today ?? []).reduce((sum, a) => sum + a.minutes, 0);
+  const allRehabDone = Boolean(
+    rehabData &&
+      rehabData.today.length > 0 &&
+      rehabData.today.every((a) => rehabData.progress.completed_today.includes(a.key))
+  );
+
   // Calculate mood check-in room average
   const moodResponses = activityResponses.filter((r) => r.activity_type === "mood_checkin");
   const avgDistress = moodResponses.length
@@ -643,7 +675,12 @@ export default function GroupTherapy() {
       <div className="panel row row--between row--wrap" style={{ background: "linear-gradient(135deg, rgba(30,58,138,0.2) 0%, rgba(15,23,42,0.6) 100%)", borderColor: "rgba(59,130,246,0.3)" }}>
         <div>
           <span className="label label--signal">PATIENT PEER SUPPORT</span>
-          <h1 style={{ marginTop: "var(--s1)", fontSize: "var(--fs-headline-lg)" }}>Group Therapy Sessions</h1>
+          {/* `data-tour` anchors the walkthrough's Group therapy step. The top
+              banner renders in every state of this screen — hub, pending join
+              request and inside a room — so the spotlight always has a target. */}
+          <h1 data-tour="group_therapy" style={{ marginTop: "var(--s1)", fontSize: "var(--fs-headline-lg)" }}>
+            Group Therapy Sessions
+          </h1>
           <p className="meta" style={{ maxWidth: "600px" }}>
             Connect with fellow patients in real-time group therapy sessions. Share coping strategies, join Google Meet calls, and participate in guided group sound exercises.
           </p>
@@ -1526,7 +1563,7 @@ export default function GroupTherapy() {
                       <p className="meta">No active rehabilitation programme found. Complete your initial assessment to generate a custom recovery plan.</p>
                     </Panel>
                   ) : (
-                    <div className="stack stack-4">
+                    <div className="stack stack-4 on-dark-panel">
                       {/* Progress Counters */}
                       <div className="grid grid-3" style={{ gap: "8px" }}>
                         <Panel tight style={{ background: "rgba(15,23,42,0.8)" }}>
@@ -1535,6 +1572,11 @@ export default function GroupTherapy() {
                             value={`${rehabData.progress.completed_today.length}/${rehabData.today.length}`}
                             size="sm"
                             tone={rehabData.progress.completed_today.length === rehabData.today.length ? "ok" : "signal"}
+                            note={
+                              rehabData.progress.completed_today.length === rehabData.today.length
+                                ? "All done for today"
+                                : `${rehabData.today.length - rehabData.progress.completed_today.length} still to do`
+                            }
                           />
                         </Panel>
                         <Panel tight style={{ background: "rgba(15,23,42,0.8)" }}>
@@ -1543,6 +1585,7 @@ export default function GroupTherapy() {
                             value={rehabData.progress.streak_days}
                             size="sm"
                             tone={rehabData.progress.streak_days >= 3 ? "ok" : "data"}
+                            note={rehabData.progress.streak_days === 1 ? "consecutive day" : "consecutive days"}
                           />
                         </Panel>
                         <Panel tight style={{ background: "rgba(15,23,42,0.8)" }}>
@@ -1551,6 +1594,7 @@ export default function GroupTherapy() {
                             value={fmt.pct100(rehabData.progress.week_completion_pct, 0)}
                             size="sm"
                             tone={rehabData.progress.week_completion_pct >= 70 ? "ok" : "data"}
+                            note={`Week ${rehabData.progress.week} of ${rehabData.progress.week_of}`}
                           />
                         </Panel>
                       </div>
@@ -1566,7 +1610,17 @@ export default function GroupTherapy() {
 
                       {/* Today's Checklist */}
                       <div className="panel stack stack-3" style={{ background: "rgba(15,23,42,0.8)" }}>
-                        <h4 style={{ color: "#fff", margin: 0 }}>Today's Assigned Rehab Checklist</h4>
+                        <div className="row row--between row--nowrap">
+                          <h4 style={{ color: "#fff", margin: 0 }}>Today's Assigned Rehab Checklist</h4>
+                          <Chip tone={allRehabDone ? "ok" : "signal"} dot>
+                            {rehabData.progress.completed_today.length}/{rehabData.today.length} done
+                          </Chip>
+                        </div>
+                        <p className="meta" style={{ margin: 0, fontSize: "var(--fs-micro)", color: "#cbd5e1" }}>
+                          {totalRehabMinutes} min assigned today · {rehabData.today.length}{" "}
+                          {rehabData.today.length === 1 ? "activity" : "activities"} prescribed from your own
+                          assessment. Open takes you to where each one is done.
+                        </p>
 
                         <ul className="stack stack-2" style={{ listStyle: "none", padding: 0, margin: 0 }}>
                           {rehabData.today.map((activity) => {
@@ -1583,10 +1637,25 @@ export default function GroupTherapy() {
                               >
                                 <div className="stack stack-1" style={{ minWidth: 0 }}>
                                   <strong style={{ fontSize: "var(--fs-small)", color: "#fff" }}>
-                                    {activity.key.replace(/_/g, " ").toUpperCase()} ({activity.minutes}m)
+                                    {rehabActivityLabel(t, activity.key)} · {activity.minutes} min
                                   </strong>
                                   <span className="meta" style={{ fontSize: "var(--fs-micro)", color: "#cbd5e1" }}>
-                                    Slot: {activity.slot} {activity.because ? `· ${activity.because}` : ""}
+                                    {t(`rehab.slot.${activity.slot}`, {
+                                      defaultValue: activity.slot.replace(/_/g, " "),
+                                    })}
+                                    {activity.because
+                                      ? ` · ${t(`rehab.reason.${activity.because}`, { defaultValue: activity.because })}`
+                                      : ""}
+                                  </span>
+                                  {/* What the activity actually is. The checklist
+                                      previously named it and nothing more, which
+                                      told a patient what to tick rather than what
+                                      to do. */}
+                                  <span
+                                    className="meta"
+                                    style={{ fontSize: "var(--fs-micro)", color: "#94a3b8", lineHeight: 1.5 }}
+                                  >
+                                    {t(`rehab.activity.${activity.key}What`, { defaultValue: "" })}
                                   </span>
                                 </div>
 
@@ -1602,10 +1671,11 @@ export default function GroupTherapy() {
                                   <button
                                     type="button"
                                     className="btn btn--sm btn--outline"
-                                    aria-label={`Open ${activity.key.replace(/_/g, " ")} on the rehabilitation screen`}
+                                    aria-label={`Open ${rehabActivityLabel(t, activity.key)} on the rehabilitation screen`}
                                     onClick={() => navigate(activityHref(activity.key))}
                                     style={{
-                                      borderColor: "rgba(148, 163, 184, 0.4)",
+                                      background: "rgba(15, 23, 42, 0.6)",
+                                      borderColor: "rgba(148, 163, 184, 0.55)",
                                       color: "#fff",
                                       whiteSpace: "nowrap",
                                     }}

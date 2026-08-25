@@ -2,9 +2,9 @@
  * First-run guided walkthrough.
  *
  * A spotlight tour: the rest of the screen dims, the section being described is
- * cut out of the dimming layer, and a card is positioned beside it. Six steps,
+ * cut out of the dimming layer, and a card is positioned beside it. Eight steps,
  * in the order a patient actually uses the product — Overview, Assessment,
- * Results, Rehabilitation, Consultation, Reports.
+ * Results, Rehabilitation, Community, Group therapy, Consultation, Reports.
  *
  * **It runs once, for genuinely new accounts only.** Two guards, and they catch
  * different things:
@@ -35,15 +35,25 @@ interface WalkStep {
 }
 
 /**
- * Six steps. The route is part of the step because a walkthrough that describes
- * the assessment while the patient is looking at the dashboard is a slideshow,
- * not a tour — each step navigates first, then highlights.
+ * Eight steps. The route is part of the step because a walkthrough that
+ * describes the assessment while the patient is looking at the dashboard is a
+ * slideshow, not a tour — each step navigates first, then highlights.
+ *
+ * Community and Group therapy sit between Rehabilitation and Consultation
+ * deliberately: the order follows how the product is actually used, from what
+ * you do alone, through what you do alongside other patients, to what you do
+ * with a clinician. Both routes are patient-only, and both targets live on the
+ * page header rather than inside a conditional branch, so the spotlight has
+ * something to land on for a brand-new account that has not joined a community
+ * or a room yet — which is precisely who sees this tour.
  */
 const STEPS: WalkStep[] = [
   { target: "overview", route: "/" },
   { target: "assessment", route: "/assessment" },
   { target: "results", route: "/results" },
   { target: "rehabilitation", route: "/rehabilitation" },
+  { target: "community", route: "/community" },
+  { target: "group_therapy", route: "/group-therapy" },
   { target: "consultation", route: "/consultation" },
   { target: "reports", route: "/results" },
 ];

@@ -338,7 +338,14 @@ export default function Community() {
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
               EchoSense Social Space
             </div>
-            <h1 style={{ fontSize: "2rem", fontWeight: 700, margin: "4px 0 8px 0", color: "var(--ink)" }}>
+            {/* `data-tour` anchors the walkthrough's Community step. On the
+                page header rather than on the feed, because a brand-new account
+                has not joined a community yet and the feed is not rendered for
+                them — the header is. */}
+            <h1
+              data-tour="community"
+              style={{ fontSize: "2rem", fontWeight: 700, margin: "4px 0 8px 0", color: "var(--ink)" }}
+            >
               Your Community, Your Space
             </h1>
             <p className="meta" style={{ display: "flex", alignItems: "center", gap: "6px", margin: 0, fontSize: "14px", color: "var(--ink-muted)" }}>

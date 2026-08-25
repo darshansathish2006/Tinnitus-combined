@@ -61,12 +61,14 @@ test.describe("first-run walkthrough", () => {
     await expect(card.getByRole("button", { name: /^Next$/ })).toBeVisible();
     await expect(card.getByRole("button", { name: /^Back$/ })).toBeDisabled();
 
-    // Walk all six, checking the order the brief specified.
+    // Walk all eight, checking the order the brief specified.
     const titles = [
       "Your dashboard",
       "Hearing assessment",
       "Your results",
       "Rehabilitation",
+      "Community",
+      "Group therapy",
       "Consultation",
       "Reports",
     ];

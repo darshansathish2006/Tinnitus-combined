@@ -1956,6 +1956,14 @@
         "title": "Rehabilitation",
         "body": "Your four-week recovery programme: what to do today, this week's goals, and your progress. Sound therapy is part of it, alongside breathing, relaxation and sleep work chosen from your own results."
       },
+      "community": {
+        "title": "Community",
+        "body": "Other patients in your own city: a feed you can post to, a live chatbox, and a short reading list. Joining is your choice — until you opt in, nothing you write is visible to anyone."
+      },
+      "group_therapy": {
+        "title": "Group therapy",
+        "body": "A private room you share with a few other patients: a video call, a chatbox, and six activities you work through together — synced breathing, sound therapy and your own rehab checklist among them."
+      },
       "consultation": {
         "title": "Consultation",
         "body": "Choose your doctor, book an appointment and join the video call. The Google Meet link appears here ten minutes before your consultation starts."

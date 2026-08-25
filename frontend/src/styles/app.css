@@ -491,6 +491,18 @@ code, kbd, .mono {
 .btn--ghost:active:not(:disabled) { transform: none; }
 
 .btn--danger { --btn-bg: var(--paper-raised); --btn-fg: var(--crit); --btn-bd: var(--crit); }
+
+/* Outlined: the border and the label carry the button, the ground shows through.
+   Unlike `--ghost` the border is kept, so it still reads as a control on a busy
+   or dark panel. `currentColor` on the border means a call site that sets only
+   `color` gets a matching outline for free. */
+.btn--outline {
+  --btn-bg: transparent;
+  --btn-fg: var(--ink);
+  --btn-bd: currentColor;
+  box-shadow: none;
+}
+.btn--outline:hover:not(:disabled) { background: var(--paper-sunken); box-shadow: none; }
 .btn--danger:hover:not(:disabled) { --btn-bg: var(--crit); --btn-fg: var(--on-crit); }
 
 .btn--lg { font-size: var(--fs-body); padding: 14px var(--s6); min-height: 52px; box-shadow: var(--shadow); }
@@ -1956,6 +1968,56 @@ code, kbd, .mono {
 }
 .toast--crit { border-left-color: var(--crit); }
 .toast--ok { border-left-color: var(--ok); }
+
+/* ==========================================================================
+   Group therapy — dark activity panels
+   --------------------------------------------------------------------------
+   The group-therapy room paints its activity panels with hardcoded dark fills
+   (`rgba(15,23,42,.8)` and friends) regardless of the active theme. Shared
+   components dropped into those panels — `Readout`, `Meter`, `Chip`, `.label` —
+   colour themselves from the theme tokens, and in the *light* theme those
+   resolve to near-black ink and dark accent inks. Dark text on a dark panel is
+   how "Today's Tasks", "Day Streak", "Weekly %" and the completion meter came
+   to be invisible: the components were behaving correctly, they were just being
+   asked the wrong question.
+
+   Rather than hardcode colours onto each element — which would have to be
+   repeated for every component added later, and would fight the design system
+   instead of using it — this re-points the tokens for the subtree. Every child
+   then computes its own correct colour, exactly as it would in the dark theme.
+   The values are the dark theme's, copied rather than referenced so the region
+   stays legible in *both* themes: this panel is dark either way.
+   ========================================================================== */
+.on-dark-panel {
+  --ink: #f2ede2;
+  --ink-2: #b9b4a9;
+  --ink-3: #918d86;
+  --ink-4: #8f8a82;
+
+  --paper: #131316;
+  --paper-raised: #1c1c21;
+  --paper-sunken: #101013;
+
+  --line: rgba(226, 232, 240, 0.28);
+  --line-faint: rgba(226, 232, 240, 0.16);
+
+  /* Brightened accents — the light theme's are tuned for white paper and sit
+     around 2:1 on this ground. */
+  --signal: #ff6a3d;
+  --data: #7d90ff;
+  --ok: #4bc47f;
+  --warn: #e8a93c;
+  --crit: #ff5f70;
+  --signal-ink: #ff6a3d;
+  --data-ink: #7d90ff;
+  --ok-ink: #4bc47f;
+  --warn-ink: #e8a93c;
+  --crit-ink: #ff5f70;
+}
+/* The meter's track and hairline are drawn from `--paper-raised` and `--ink`,
+   which the block above has already corrected; this only stops the 1px border
+   disappearing into the panel at low completion. */
+.on-dark-panel .meter { border-color: rgba(226, 232, 240, 0.45); }
 
 /* ==========================================================================
    Guide — deep-link targets
