@@ -60,6 +60,58 @@ const FEELING_EMOJIS = [
   { emoji: "😴", label: "Sleepy" },
 ];
 
+/**
+ * The three reaction bands the Mood Radar face animates between, keyed by the
+ * distress slider's 1-10 value.
+ *
+ * The bands run sad -> average -> happy as the number climbs, which is the
+ * mapping the room was specified with. Note that it reads opposite to the
+ * slider's own scale, where 1 is "Peaceful" and 10 is "Severe" — flipping the
+ * face back to follow the wording is a matter of reversing the three `max`
+ * bounds below, and nothing else in the component needs to change.
+ */
+const MOOD_TIERS = [
+  { key: "sad", max: 3, emoji: "😢", label: "Sad" },
+  { key: "average", max: 7, emoji: "😐", label: "Average" },
+  { key: "happy", max: 10, emoji: "😄", label: "Happy" },
+] as const;
+
+type MoodTier = (typeof MOOD_TIERS)[number];
+
+/**
+ * The paper colours a Gratitude Wall note can be posted on.
+ *
+ * These are the five the wall has always cycled through; picking one now just
+ * makes the choice the patient's rather than the grid position's.
+ */
+const NOTE_COLORS = [
+  { value: "#fef08a", label: "Yellow" },
+  { value: "#bbf7d0", label: "Green" },
+  { value: "#bfdbfe", label: "Blue" },
+  { value: "#fbcfe8", label: "Pink" },
+  { value: "#e9d5ff", label: "Purple" },
+] as const;
+
+/**
+ * The colour to paint a note, given what was stored with it and where it sits.
+ *
+ * Notes posted before the picker existed carry no colour, so they keep falling
+ * back to the position-derived cycle and the wall looks unchanged for them.
+ *
+ * The stored value is checked against the palette rather than trusted: it is
+ * JSON that reached the database from whichever participant posted the note,
+ * and it is on its way into a `background` declaration.
+ */
+function noteColorFor(stored: unknown, index: number): string {
+  const match = NOTE_COLORS.find((c) => c.value === stored);
+  return match ? match.value : NOTE_COLORS[index % NOTE_COLORS.length].value;
+}
+
+/** The reaction band a 1-10 distress rating falls in. */
+function moodTierFor(rating: number): MoodTier {
+  return MOOD_TIERS.find((tier) => rating <= tier.max) ?? MOOD_TIERS[MOOD_TIERS.length - 1];
+}
+
 export default function GroupTherapy() {
   const toast = useSession((s) => s.toast);
   const navigate = useNavigate();
@@ -137,6 +189,40 @@ export default function GroupTherapy() {
   // Gratitude Wall state
   const [gratitudeNote, setGratitudeNote] = useState("");
   const [submittingGratitude, setSubmittingGratitude] = useState(false);
+  // The paper the next note goes on. It keeps whatever was picked last, so
+  // posting several notes in one colour does not mean re-picking each time.
+  const [noteColor, setNoteColor] = useState<string>(NOTE_COLORS[0].value);
+  /**
+   * The notes currently playing their stick-onto-the-wall animation.
+   *
+   * A note earns it by being one the wall has not shown before — whether this
+   * patient just posted it or it arrived from someone else on the next poll.
+   * `seenGratitudeIds` starts as null rather than an empty set so the first
+   * batch loaded can be told apart from notes genuinely arriving: opening the
+   * room marks what is already on the wall as seen and animates none of it,
+   * which is what stops all fifty notes flying in at once on every join.
+   *
+   * The note this patient just posted is the exception: it does not drop in
+   * here, it flies from the compose box up to its slot — see `flightRef`.
+   */
+  const [stickingNoteIds, setStickingNoteIds] = useState<number[]>([]);
+  const seenGratitudeIds = useRef<Set<number> | null>(null);
+  /**
+   * Where a just-posted note should fly from, and the text to recognise it by.
+   *
+   * Posting captures the compose row's position on screen, then the note that
+   * comes back from the server is animated along the gap between there and
+   * wherever the grid has placed it. That distance is only knowable once both
+   * ends exist, so the travel is driven by the Web Animations API rather than
+   * the CSS keyframes the dropped-in notes use — a stylesheet cannot express a
+   * journey whose length depends on the layout it lands in.
+   */
+  const flightRef = useRef<{ text: string; rect: DOMRect } | null>(null);
+  const gratitudeFormRef = useRef<HTMLFormElement | null>(null);
+  const wallGridRef = useRef<HTMLDivElement | null>(null);
+  const noteElsRef = useRef<Map<number, HTMLDivElement>>(new Map());
+  /** The copy currently in flight, so leaving the page cannot strand it. */
+  const flyingNoteRef = useRef<HTMLElement | null>(null);
 
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -311,6 +397,145 @@ export default function GroupTherapy() {
       chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
     }
   }, [chatMessages.length]);
+
+  /**
+   * Send a just-posted note travelling from the compose row to its slot on the
+   * wall, then paste it down.
+   *
+   * The note is already in its final position in the grid; the animation starts
+   * it back at the compose box and walks it home, which is why the offsets are
+   * source-minus-destination. It arcs — the midpoint is lifted above the
+   * straight line between the two — and lands askew before straightening, so it
+   * reads as a note being carried over and pressed onto the wall rather than a
+   * box sliding across the screen.
+   */
+  const flyNoteToWall = useCallback((noteId: number, from: DOMRect) => {
+    const el = noteElsRef.current.get(noteId);
+    if (!el || typeof el.animate !== "function") return;
+    // The wall scrolls, and the newest note sits at the top of it. Posting from
+    // halfway down the wall would otherwise animate a note the patient cannot
+    // see, so bring its row into view before it sets off.
+    if (wallGridRef.current) wallGridRef.current.scrollTop = 0;
+
+    const to = el.getBoundingClientRect();
+    if (to.width === 0 || to.height === 0) return;
+
+    /* What actually travels is a copy of the note pinned over the page, not the
+       note in the grid. The wall is a scroll container, so it clips anything
+       outside its box — animating the real note would hide the whole journey
+       until it crossed the wall's top edge, which is most of it. The copy is
+       `position: fixed` on the body, where nothing clips it, and the real note
+       waits invisibly in its slot until the copy lands on top of it. */
+    const clone = el.cloneNode(true) as HTMLElement;
+    clone.classList.remove("gratitude-note--sticking");
+    Object.assign(clone.style, {
+      position: "fixed",
+      left: `${to.left}px`,
+      top: `${to.top}px`,
+      width: `${to.width}px`,
+      height: `${to.height}px`,
+      margin: "0",
+      // Under the modal overlay's z-index of 100, so a note in flight can never
+      // end up drawn over a dialog.
+      zIndex: "90",
+      pointerEvents: "none",
+    });
+    document.body.appendChild(clone);
+    flyingNoteRef.current = clone;
+    el.style.visibility = "hidden";
+
+    // Offsets are source-minus-destination: the copy is sitting on the slot
+    // already, so the animation walks it back to the compose row and home again.
+    const dx = from.left + from.width / 2 - (to.left + to.width / 2);
+    const dy = from.top + from.height / 2 - (to.top + to.height / 2);
+
+    const animation = clone.animate(
+      [
+        {
+          transform: `translate(${dx}px, ${dy}px) scale(0.3) rotate(-12deg)`,
+          opacity: 0.35,
+          boxShadow: "0 26px 34px -10px rgba(0, 0, 0, 0.45)",
+          offset: 0,
+        },
+        {
+          // Apex of the arc: lifted clear of the direct path between the two
+          // points, so the note is carried over rather than dragged across.
+          transform: `translate(${dx * 0.4}px, ${dy * 0.4 - 30}px) scale(0.86) rotate(7deg)`,
+          opacity: 1,
+          boxShadow: "0 24px 30px -8px rgba(0, 0, 0, 0.4)",
+          offset: 0.55,
+        },
+        {
+          // Contact with the wall — squashed a little, still off-square.
+          transform: "translate(0, 0) scale(0.97) rotate(3deg)",
+          boxShadow: "0 6px 10px -2px rgba(0, 0, 0, 0.24)",
+          offset: 0.84,
+        },
+        {
+          transform: "translate(0, 0) scale(1) rotate(0deg)",
+          boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.1)",
+          offset: 1,
+        },
+      ],
+      { duration: 820, easing: "cubic-bezier(0.22, 1, 0.36, 1)" }
+    );
+
+    // Hand the slot back whether the animation finished or was cancelled — a
+    // note left invisible behind a removed copy would read as a lost post.
+    const land = () => {
+      clone.remove();
+      if (flyingNoteRef.current === clone) flyingNoteRef.current = null;
+      el.style.visibility = "";
+    };
+    animation.finished.then(land, land);
+  }, []);
+
+  // A note mid-flight lives on the body, outside React's tree, so unmounting the
+  // page would otherwise leave it pinned to the screen.
+  useEffect(() => {
+    return () => {
+      flyingNoteRef.current?.remove();
+      flyingNoteRef.current = null;
+    };
+  }, []);
+
+  // Flag notes the wall has not shown before, so each one animates onto it once.
+  useEffect(() => {
+    const gratitude = activityResponses.filter((r) => r.activity_type === "gratitude_wall");
+    const ids = gratitude.map((r) => r.id);
+    // Leaving the room clears the wall; forget what was seen so re-entering it
+    // is treated as a fresh first batch rather than fifty new arrivals.
+    if (!activeSession) {
+      seenGratitudeIds.current = null;
+      flightRef.current = null;
+      setStickingNoteIds([]);
+      return;
+    }
+    if (seenGratitudeIds.current === null) {
+      seenGratitudeIds.current = new Set(ids);
+      return;
+    }
+    const seen = seenGratitudeIds.current;
+    const arrived = ids.filter((id) => !seen.has(id));
+    if (arrived.length === 0) return;
+    arrived.forEach((id) => seen.add(id));
+
+    // Pick this patient's own note out of the batch by the text it was posted
+    // with — the server assigns the id, so that is the only handle there is
+    // until it comes back. Everyone else's notes drop in from above instead.
+    const flight = flightRef.current;
+    const mine = flight
+      ? gratitude.find((r) => arrived.includes(r.id) && r.response_data.note === flight.text)
+      : undefined;
+    if (flight && mine) {
+      flightRef.current = null;
+      if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        flyNoteToWall(mine.id, flight.rect);
+      }
+    }
+    const dropping = arrived.filter((id) => id !== mine?.id);
+    if (dropping.length > 0) setStickingNoteIds((prev) => [...prev, ...dropping]);
+  }, [activityResponses, activeSession, flyNoteToWall]);
 
   // Breathing timer cycle
   useEffect(() => {
@@ -622,15 +847,22 @@ export default function GroupTherapy() {
   async function handleSubmitGratitude(e: React.FormEvent) {
     e.preventDefault();
     if (!activeSession || !gratitudeNote.trim()) return;
+    const note = gratitudeNote.trim();
+    // Where the note leaves from, measured while the compose row is still sitting
+    // where the patient clicked Post — the input is cleared a moment later and
+    // the wall reflows around the new note, so this cannot be read back after.
+    const launchFrom = gratitudeFormRef.current?.getBoundingClientRect();
     setSubmittingGratitude(true);
     try {
-      await api.groupTherapy.submitActivity(activeSession.id, "gratitude_wall", {
-        note: gratitudeNote.trim(),
-      });
+      await api.groupTherapy.submitActivity(activeSession.id, "gratitude_wall", { note, color: noteColor });
+      if (launchFrom) flightRef.current = { text: note, rect: launchFrom };
       setGratitudeNote("");
       toast("Encouragement note posted to wall!", "info");
       loadSessionDetail(activeSession.id, true);
     } catch (err: any) {
+      // Nothing is going to arrive, so leave no flight waiting to attach itself
+      // to whichever note lands next.
+      flightRef.current = null;
       toast(err.message || "Failed to post gratitude note", "crit");
     } finally {
       setSubmittingGratitude(false);
@@ -668,6 +900,9 @@ export default function GroupTherapy() {
       moodResponses.length
     ).toFixed(1)
     : "5.0";
+
+  // Which face the Mood Radar shows for the rating currently on the slider.
+  const moodTier = moodTierFor(distressRating);
 
   return (
     <div className="wrap stack stack-6" style={{ paddingBottom: "var(--s8)" }}>
@@ -1231,6 +1466,15 @@ export default function GroupTherapy() {
                     <p className="meta" style={{ margin: 0 }}>Submit your current distress level to calculate room statistics anonymously.</p>
 
                     <div className="stack stack-2" style={{ marginTop: "var(--s2)" }}>
+                      {/* The face reacts as the slider moves: keying the emoji on
+                          the band name remounts it whenever the rating crosses a
+                          boundary, which is what replays the swap animation. */}
+                      <div className={`mood-face mood-face--${moodTier.key}`}>
+                        <span key={moodTier.key} className="mood-face__emoji" role="img" aria-hidden="true">
+                          {moodTier.emoji}
+                        </span>
+                        <strong className="mood-face__label">{moodTier.label}</strong>
+                      </div>
                       <label className="row row--between">
                         <span>Your Current Tinnitus Distress (1 = Peaceful, 10 = Severe):</span>
                         <strong>{distressRating} / 10</strong>
@@ -1241,8 +1485,15 @@ export default function GroupTherapy() {
                         max="10"
                         value={distressRating}
                         onChange={(e) => setDistressRating(Number(e.target.value))}
+                        aria-describedby="mood-face-readout"
                         style={{ width: "100%", accentColor: "var(--accent)" }}
                       />
+                      {/* The face is decorative; this carries the same reading to
+                          a screen reader, and politely so it is not announced on
+                          every one of the ten slider steps. */}
+                      <span id="mood-face-readout" className="sr-only" aria-live="polite">
+                        {moodTier.label} — {distressRating} out of 10
+                      </span>
                       <button
                         type="button"
                         className="btn btn--primary"
@@ -1316,31 +1567,53 @@ export default function GroupTherapy() {
                     <p className="meta">Post virtual sticky notes of strength and positivity to support group members.</p>
                   </div>
 
-                  <form onSubmit={handleSubmitGratitude} className="row row--tight">
-                    <input
-                      type="text"
-                      placeholder="Post a note (e.g. You are stronger than your tinnitus! 💚)"
-                      value={gratitudeNote}
-                      onChange={(e) => setGratitudeNote(e.target.value)}
-                      className="input"
-                      style={{
-                        flex: 1,
-                        background: "rgba(15, 23, 42, 0.95)",
-                        color: "#f8fafc",
-                        border: "1px solid rgba(148, 163, 184, 0.4)",
-                      }}
-                    />
-                    <button
-                      type="submit"
-                      className="btn btn--primary"
-                      disabled={submittingGratitude || !gratitudeNote.trim()}
-                    >
-                      Post Note
-                    </button>
+                  <form onSubmit={handleSubmitGratitude} className="stack stack-2" ref={gratitudeFormRef}>
+                    <div className="row row--tight">
+                      <input
+                        type="text"
+                        placeholder="Post a note (e.g. You are stronger than your tinnitus! 💚)"
+                        value={gratitudeNote}
+                        onChange={(e) => setGratitudeNote(e.target.value)}
+                        className="input"
+                        style={{
+                          flex: 1,
+                          background: "rgba(15, 23, 42, 0.95)",
+                          color: "#f8fafc",
+                          border: "1px solid rgba(148, 163, 184, 0.4)",
+                        }}
+                      />
+                      <button
+                        type="submit"
+                        className="btn btn--primary"
+                        disabled={submittingGratitude || !gratitudeNote.trim()}
+                      >
+                        Post Note
+                      </button>
+                    </div>
+
+                    {/* Paper colour for the note about to be posted. Grouped and
+                        labelled so the swatches are not five unnamed squares to
+                        anyone not going by colour alone. */}
+                    <div className="row row--tight note-swatches" role="group" aria-label="Note colour">
+                      <span className="meta">Note colour:</span>
+                      {NOTE_COLORS.map((c) => (
+                        <button
+                          key={c.value}
+                          type="button"
+                          className={`note-swatch${noteColor === c.value ? " note-swatch--on" : ""}`}
+                          style={{ background: c.value }}
+                          aria-pressed={noteColor === c.value}
+                          aria-label={c.label}
+                          title={c.label}
+                          onClick={() => setNoteColor(c.value)}
+                        />
+                      ))}
+                    </div>
                   </form>
 
                   {/* Wall Sticky Notes Grid */}
                   <div
+                    ref={wallGridRef}
                     style={{
                       display: "grid",
                       gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
@@ -1356,22 +1629,25 @@ export default function GroupTherapy() {
                       activityResponses
                         .filter((r) => r.activity_type === "gratitude_wall")
                         .map((r, idx) => {
-                          const colors = ["#fef08a", "#bbf7d0", "#bfdbfe", "#fbcfe8", "#e9d5ff"];
-                          const noteBg = colors[idx % colors.length];
+                          const noteBg = noteColorFor(r.response_data.color, idx);
+                          const sticking = stickingNoteIds.includes(r.id);
                           return (
                             <div
                               key={r.id}
-                              style={{
-                                background: noteBg,
-                                color: "#0f172a",
-                                padding: "var(--s3)",
-                                borderRadius: "var(--radius-sm)",
-                                boxShadow: "0 4px 6px -1px rgba(0,0,0,0.1)",
-                                display: "flex",
-                                flexDirection: "column",
-                                justifyContent: "space-between",
-                                minHeight: "90px",
+                              ref={(el) => {
+                                if (el) noteElsRef.current.set(r.id, el);
+                                else noteElsRef.current.delete(r.id);
                               }}
+                              className={`gratitude-note${sticking ? " gratitude-note--sticking" : ""}`}
+                              // The class is dropped once the note has landed, so a
+                              // later re-render cannot restart the animation under
+                              // a note that is already stuck to the wall.
+                              onAnimationEnd={
+                                sticking
+                                  ? () => setStickingNoteIds((prev) => prev.filter((id) => id !== r.id))
+                                  : undefined
+                              }
+                              style={{ background: noteBg }}
                             >
                               <p style={{ margin: 0, fontWeight: 500, fontSize: "var(--fs-small)" }}>"{r.response_data.note}"</p>
                               <span style={{ fontSize: "10px", fontWeight: "bold", textAlign: "right", marginTop: "8px", opacity: 0.8 }}>
