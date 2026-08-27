@@ -305,6 +305,25 @@ export default function Assessment() {
   }
 
   /**
+   * Leave the hearing test and go on to the tinnitus measurement.
+   *
+   * Deliberately writes nothing. Marking `audiometry` in `modules_done` would
+   * record the test as taken, and saving an empty audiogram would put a row of
+   * blank thresholds where measurements should be — either would make a skipped
+   * test indistinguishable from a completed one in the report and on the
+   * clinician's record. Advancing the phase alone leaves the omission visible as
+   * exactly what it is: no audiometry on file.
+   *
+   * The consequences are real — no audiogram, no hearing grade, and no 3D
+   * cochlea, all of which are built from these thresholds — which is why this is
+   * a deliberate exit rather than a way past a step.
+   */
+  function skipAudiometry() {
+    setHearingPhase("measurement");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  /**
    * Phase one: the tinnitus VAS scales and the THI.
    *
    * Saved on its own rather than held in memory until the end, so a patient who
@@ -797,7 +816,11 @@ export default function Assessment() {
               />
             </>
           ) : hearingPhase === "audiometry" ? (
-            <Audiometry onComplete={submitAudiometry} initialAudiogram={assessment?.audiogram} />
+            <Audiometry
+              onComplete={submitAudiometry}
+              onSkip={skipAudiometry}
+              initialAudiogram={assessment?.audiogram}
+            />
           ) : hearingPhase === "measurement" ? (
             /* Pitch, loudness and the masking profile — the three modules the
                therapy prescription is actually derived from. */

@@ -67,9 +67,19 @@ export interface AudiometryResult {
 
 export default function Audiometry({
   onComplete,
+  onSkip,
   initialAudiogram,
 }: {
   onComplete(result: AudiometryResult): void;
+  /**
+   * Leave the hearing test without taking it.
+   *
+   * Distinct from the per-frequency Skip in the test controls, which drops one
+   * tone and carries on. This abandons the module: nothing is submitted, so no
+   * audiogram is written and `modules_done` does not gain `audiometry` — an
+   * assessment that skipped the test must not read as one that passed it.
+   */
+  onSkip?(): void;
   initialAudiogram?: Record<string, Record<string, number>>;
 }) {
   const { t } = useTranslation();
@@ -382,7 +392,19 @@ export default function Audiometry({
                 <Chip tone="ghost">{t("audiometry.listening")}</Chip>
               )}
             </div>
-            <span className="mono meta">{progress}%</span>
+            <div className="row row--tight row--nowrap">
+              <span className="mono meta">{progress}%</span>
+              {onSkip && (
+                <button
+                  type="button"
+                  className="btn btn--sm btn--ghost"
+                  onClick={onSkip}
+                  title={t("audiometry.skipModuleHint")}
+                >
+                  {t("audiometry.skipModule")}
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="center stack stack-5" style={{ paddingBlock: "var(--s6)" }}>

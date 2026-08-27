@@ -1126,6 +1126,8 @@
     "personalisedLater": "This is a working level, good enough to measure against. At the end of the hearing measurement we set your real reference level — using your own tinnitus pitch and the measurements you are about to give, rather than a standard tone."
   },
   "audiometry": {
+    "skipModule": "Skip hearing test",
+    "skipModuleHint": "Leave the hearing test without taking it. No thresholds are recorded, so your audiogram, hearing grade and 3D cochlea will be unavailable.",
     "measuredSummary": "{{measured}} of {{total}} frequencies measured.",
     "skippedSummary": "{{count}} skipped or not converged — these are left blank on your audiogram rather than guessed.",
     "noThresholdsTitle": "No thresholds were measured",
