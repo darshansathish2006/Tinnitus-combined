@@ -2069,6 +2069,168 @@ code, kbd, .mono {
   .rehab-target { animation: none; box-shadow: 0 0 0 3px var(--signal-subtle); }
 }
 
+/* Mood Radar reaction face.
+
+   The group-therapy room's distress slider carries a face that answers back as
+   it moves. Three bands, each with its own colour and its own idle motion, so
+   the reaction reads even before the label is read: the sad face droops, the
+   average one holds fairly still, and the happy one bounces.
+
+   Two animations run at once and they are deliberately kept on separate
+   elements. The wrapper's colours transition smoothly across every step of the
+   slider, while the emoji itself only animates when the band *changes* — React
+   keys it on the band name, so crossing a boundary remounts the span and
+   restarts `mood-swap` from the top. Dragging inside one band therefore leaves
+   the face alone rather than re-firing the pop on all ten steps. */
+.mood-face {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border: 1px solid var(--tier-line);
+  border-radius: var(--radius-lg);
+  background: var(--tier-wash);
+  transition: background 220ms ease, border-color 220ms ease, color 220ms ease;
+}
+.mood-face--sad { --tier-line: var(--crit); --tier-wash: var(--crit-wash); --tier-ink: var(--crit-ink); }
+.mood-face--average { --tier-line: var(--warn); --tier-wash: var(--warn-wash); --tier-ink: var(--warn-ink); }
+.mood-face--happy { --tier-line: var(--ok); --tier-wash: var(--ok-wash); --tier-ink: var(--ok-ink); }
+
+.mood-face__emoji {
+  font-size: 42px;
+  line-height: 1;
+  /* `mood-swap` plays once on mount; the second, endless animation is the band's
+     idle motion, named per band by the rules below. */
+  animation: mood-swap 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.mood-face--sad .mood-face__emoji { animation: mood-swap 420ms cubic-bezier(0.34, 1.56, 0.64, 1), mood-droop 3.2s ease-in-out 420ms infinite; }
+.mood-face--average .mood-face__emoji { animation: mood-swap 420ms cubic-bezier(0.34, 1.56, 0.64, 1), mood-sway 3s ease-in-out 420ms infinite; }
+.mood-face--happy .mood-face__emoji { animation: mood-swap 420ms cubic-bezier(0.34, 1.56, 0.64, 1), mood-bounce 1.1s ease-in-out 420ms infinite; }
+
+.mood-face__label {
+  color: var(--tier-ink);
+  font-size: var(--fs-small);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* The swap: shrink in from below with a slight overshoot, so a band change is
+   felt rather than just seen. */
+@keyframes mood-swap {
+  0% { transform: scale(0.5) translateY(6px); opacity: 0; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+@keyframes mood-droop {
+  0%, 100% { transform: translateY(0) rotate(-6deg); }
+  50% { transform: translateY(3px) rotate(-10deg); }
+}
+@keyframes mood-sway {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50% { transform: translateY(-1px) rotate(2deg); }
+}
+@keyframes mood-bounce {
+  0%, 100% { transform: translateY(0) scale(1); }
+  40% { transform: translateY(-8px) scale(1.08); }
+  60% { transform: translateY(-4px) scale(1.04); }
+}
+
+/* Reduced motion keeps the face and its colours — they are the information —
+   and drops only the movement. */
+@media (prefers-reduced-motion: reduce) {
+  .mood-face,
+  .mood-face__emoji,
+  .mood-face--sad .mood-face__emoji,
+  .mood-face--average .mood-face__emoji,
+  .mood-face--happy .mood-face__emoji {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* Gratitude Wall sticky notes.
+
+   The resting note is what the wall has always shown — the colour still comes
+   from the component, which cycles it per note. Only the arrival is new: a note
+   the wall has not shown before drops in from above, lands slightly askew, and
+   settles flat, the way a real sticky note gets pressed onto a board.
+
+   The shadow does most of the work. It starts wide and soft — a note held above
+   the wall — and tightens as the note comes down, so the movement reads as
+   distance rather than as a card fading in. `transform-origin` sits near the
+   top edge because that is the strip that would actually be holding it. */
+.gratitude-note {
+  color: #0f172a;
+  padding: var(--s3);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 90px;
+}
+/* The paper-colour picker under the compose row. The swatch is the colour, so
+   the selected one is marked with a ring drawn outside it rather than anything
+   painted on top — a tick or a border would sit on the very sample the patient
+   is trying to judge. */
+.note-swatches { align-items: center; }
+.note-swatch {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid rgba(15, 23, 42, 0.35);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+.note-swatch:hover { transform: translateY(-2px); }
+.note-swatch--on {
+  transform: translateY(-2px);
+  box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--ink), 0 2px 4px rgba(0, 0, 0, 0.24);
+}
+.note-swatch:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .note-swatch { transition: none; }
+  .note-swatch:hover { transform: none; }
+}
+
+.gratitude-note--sticking {
+  transform-origin: 50% 15%;
+  animation: note-stick 620ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes note-stick {
+  0% {
+    opacity: 0;
+    transform: translateY(-46px) scale(1.14) rotate(-7deg);
+    box-shadow: 0 22px 30px -8px rgba(0, 0, 0, 0.42);
+  }
+  55% {
+    opacity: 1;
+    /* Contact: the note squashes a little and is still off-square. */
+    transform: translateY(0) scale(0.97) rotate(2.5deg);
+    box-shadow: 0 6px 10px -2px rgba(0, 0, 0, 0.24);
+  }
+  78% {
+    transform: translateY(0) scale(1.02) rotate(-1.2deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1) rotate(0deg);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  }
+}
+
+/* Reduced motion still needs the note to appear — it just arrives instead of
+   flying. The fade keeps it from materialising with no transition at all, and
+   `onAnimationEnd` still fires, so the class is cleaned up either way. */
+@media (prefers-reduced-motion: reduce) {
+  .gratitude-note--sticking { animation: fadein 260ms ease-out; }
+}
+
 /* Print.
 
    Paper is white whatever the screen theme is, so the dark palette has to be
