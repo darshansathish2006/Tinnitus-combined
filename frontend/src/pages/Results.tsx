@@ -50,7 +50,15 @@ import {
   IconTarget,
   IconWave,
 } from "../components/icons";
-import { Audiogram, Fingerprint, RadialGauge, RiCurve, ShapWaterfall, TrendChart } from "../components/charts";
+import {
+  Audiogram,
+  CombinedAudiogramMasking,
+  Fingerprint,
+  RadialGauge,
+  RiCurve,
+  ShapWaterfall,
+  TrendChart,
+} from "../components/charts";
 
 // Three.js is ~500 kB and the summary renders long before it arrives, so the
 // cochlea streams in beside the text rather than holding up the report.
@@ -78,6 +86,28 @@ export default function Results() {
 
   const completed = (assessments.data ?? []).filter((a) => a.status === "complete");
   const activeId = selectedId ?? completed[0]?.id ?? null;
+
+  /**
+   * The most recent completed assessment that actually carries an audiogram.
+   *
+   * The report is always *this* assessment's report — borrowing another one's
+   * thresholds into it would put March's audiogram under June's heading, and a
+   * report that mixes two visits is worse than one with a gap. But the patient
+   * still needs to know the difference between "your hearing has never been
+   * measured" and "it was measured, just not on the visit you are looking at",
+   * and reading only the newest record cannot tell them apart: both render as
+   * "No audiometric data".
+   *
+   * This is the same rule the backend already applies for the 3D cochlea, whose
+   * own comment records that reading only the newest record "showed 'no
+   * audiogram' for people with three of them". The audiogram on this page never
+   * learned it. Computed from the list already fetched, so it costs no request.
+   */
+  const audiogramSourceId =
+    completed.find((a) => {
+      const g = (a as { audiogram?: Record<string, Record<string, number>> }).audiogram;
+      return Boolean(g && (Object.keys(g.left ?? {}).length || Object.keys(g.right ?? {}).length));
+    })?.id ?? null;
 
   const report = useAsync(
     () => (activeId ? api.reports.clinical(activeId) : Promise.resolve(null)),
@@ -118,6 +148,12 @@ export default function Results() {
 
   const data = report.data;
   const detail = analysis.data?.analysis;
+  /** Does the assessment currently on screen carry any thresholds? */
+  const hasAudiogram = Boolean(
+    data?.audiometry?.raw &&
+      (Object.keys(data.audiometry.raw.left ?? {}).length ||
+        Object.keys(data.audiometry.raw.right ?? {}).length)
+  );
   const prediction = detail?.prediction;
   const outputs = prediction?.outputs ?? {};
   const tri = detail?.derived?.tri;
@@ -328,6 +364,13 @@ export default function Results() {
                   height={330}
                 />
                 <AudiometryReviewBlock review={data.audiometry.review} />
+                {!hasAudiogram && (
+                  <AudiogramElsewhereNotice
+                    sourceId={audiogramSourceId === activeId ? null : audiogramSourceId}
+                    onOpen={setSelectedId}
+                  />
+                )}
+                <MaskingOverlayBlock report={data} />
                 <div className="grid grid-4" style={{ marginTop: "var(--s4)" }}>
                   <Readout label={t("results.clinical.ptaRight")} value={fmt.db(data.audiometry.pta_right, 1)} unit="dB HL" size="sm" />
                   <Readout label={t("results.clinical.ptaLeft")} value={fmt.db(data.audiometry.pta_left, 1)} unit="dB HL" size="sm" />
@@ -1049,6 +1092,79 @@ function AudiometryReviewBlock({ review }: { review?: AudiometryReview | null })
           </ul>
         )}
         {review.flagged && <p className="meta">{t("results.audiometryReview.caveat")}</p>}
+      </div>
+    </Panel>
+  );
+}
+
+/**
+ * Hearing thresholds and the tinnitus masking curve, on one set of axes.
+ *
+ * Both series come from the stored assessment: thresholds from
+ * `audiometry.raw`, the curve from `psychoacoustics.masking.curve`, which the
+ * server derives from `masking_thresholds` — the per-frequency levels the
+ * masking module recorded. Nothing here is synthesised, and a patient who
+ * skipped the masking module gets the empty state rather than a drawn curve.
+ *
+ * The masking curve had no home in the report at all before this: it was
+ * rendered inside the assessment module that collected it and then only the
+ * derived reference level survived into the record. So the one comparison the
+ * chart exists to support — how far above threshold the percept has to be
+ * covered, frequency by frequency — could not be made after the session.
+ */
+function MaskingOverlayBlock({ report }: { report: any }) {
+  const { t } = useTranslation();
+  const curve = report?.psychoacoustics?.masking?.curve;
+  const raw = report?.audiometry?.raw;
+  const pitchHz = report?.psychoacoustics?.pitch_match_hz ?? null;
+
+  const hasCurve = Array.isArray(curve) && curve.some((p: any) => p?.threshold_db !== null && p?.masked === true);
+  const hasThresholds = Boolean(raw && (Object.keys(raw.left ?? {}).length || Object.keys(raw.right ?? {}).length));
+
+  // Nothing to overlay: say so rather than drawing empty axes, which read as a
+  // measurement that came back flat.
+  if (!hasCurve && !hasThresholds) return null;
+
+  return (
+    <Panel title={t("results.maskingOverlay.title")} tight headPlain style={{ marginTop: "var(--s4)" }}>
+      <div className="stack stack-3">
+        <p className="meta">{t("results.maskingOverlay.body")}</p>
+        <CombinedAudiogramMasking
+          audiogram={raw}
+          curve={Array.isArray(curve) ? curve : []}
+          pitchHz={pitchHz}
+          height={340}
+        />
+        {!hasCurve && <p className="meta">{t("results.maskingOverlay.noMasking")}</p>}
+      </div>
+    </Panel>
+  );
+}
+
+/**
+ * Shown when *this* assessment has no thresholds but an earlier one does.
+ *
+ * Deliberately a pointer rather than a substitution: it offers to open the
+ * assessment that holds the measurement instead of quietly drawing that
+ * measurement here. Nothing is fabricated and no data is moved between records.
+ */
+function AudiogramElsewhereNotice({
+  sourceId,
+  onOpen,
+}: {
+  sourceId: number | null;
+  onOpen(id: number): void;
+}) {
+  const { t } = useTranslation();
+  if (sourceId === null) return null;
+  return (
+    <Panel tone="info" tight style={{ marginTop: "var(--s3)" }}>
+      <div className="stack stack-2">
+        <span className="label">{t("results.audiogramElsewhere.title")}</span>
+        <p className="meta">{t("results.audiogramElsewhere.body")}</p>
+        <button type="button" className="btn btn--sm" onClick={() => onOpen(sourceId)}>
+          {t("results.audiogramElsewhere.open")}
+        </button>
       </div>
     </Panel>
   );

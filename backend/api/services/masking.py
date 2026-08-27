@@ -115,8 +115,21 @@ def curve(thresholds: Mapping[str, Any] | None, unmasked: Iterable[Any] = ()) ->
         except (TypeError, ValueError):
             continue
 
+    # The standard eight, plus anything measured off them.
+    #
+    # `masking_thresholds` has always been an open map — the serializer's own
+    # note says the frequency set is deliberately not fixed — but this builder
+    # walked `MASKING_FREQUENCIES` alone, so a threshold taken at any other
+    # frequency was stored faithfully and then silently dropped on the way to
+    # the chart. Now that the masking module offers a frequency slider that is a
+    # real loss of data, so the series is the union: the presets always appear
+    # (as the shape of the procedure, tested or not) and measured extras appear
+    # alongside them, in frequency order.
+    extras = set(values) | unmaskable
+    plotted = sorted(set(MASKING_FREQUENCIES) | extras)
+
     points: list[dict[str, Any]] = []
-    for hz in MASKING_FREQUENCIES:
+    for hz in plotted:
         if hz in unmaskable:
             points.append({"hz": hz, "threshold_db": None, "masked": False, "tested": True})
         elif hz in values:

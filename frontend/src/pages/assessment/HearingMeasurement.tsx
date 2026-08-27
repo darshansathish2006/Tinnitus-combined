@@ -126,6 +126,9 @@ export interface HearingMeasurementResult {
 /** The audiometric series the masking module walks, in order. */
 const MASKING_FREQUENCIES = [250, 500, 1000, 2000, 3000, 4000, 6000, 8000];
 
+/** Top of the masking frequency slider, in cents above `PITCH_MIN_HZ`. */
+const MASK_MAX_CENTS = 6000; // 250 Hz * 2^5 = 8 kHz
+
 /**
  * Pitch is stepped in *cents*, not hertz.
  *
@@ -135,8 +138,17 @@ const MASKING_FREQUENCIES = [250, 500, 1000, 2000, 3000, 4000, 6000, 8000];
  * a semitone everywhere on the range, which is roughly the smallest difference
  * a non-musician can reliably hear.
  */
-const PITCH_MIN_HZ = 125;
-const PITCH_MAX_HZ = 8000;
+// 250 Hz - 12 kHz. The lower bound is the bottom of the audiometric range and
+// the upper reaches the high-frequency percepts that noise-induced tinnitus
+// commonly sits at, which the previous 8 kHz ceiling could not match at all —
+// a patient whose tinnitus was at 10 kHz had to settle for the top of the
+// slider and record a pitch they had not actually matched.
+//
+// These two also anchor the cents helpers below, which the masking module now
+// reuses for its own frequency slider: 250 Hz is cents 0, so 8 kHz is exactly
+// 6000 cents and the arithmetic stays whole.
+const PITCH_MIN_HZ = 250;
+const PITCH_MAX_HZ = 12000;
 const CENTS_STEP = 25;
 const centsFromHz = (hz: number) => 1200 * Math.log2(hz / PITCH_MIN_HZ);
 const hzFromCents = (cents: number) => PITCH_MIN_HZ * Math.pow(2, cents / 1200);
@@ -165,6 +177,19 @@ export default function HearingMeasurement({
     centsFromHz(initial?.pitch_match_hz ?? 4000)
   );
   const [loudnessDbHl, setLoudnessDbHl] = useState(initial?.loudness_match_db_hl ?? 35);
+  /**
+   * Presentation level for the *pitch* module.
+   *
+   * Was fixed at 40 dB HL, which is inaudible to anyone with a moderate loss at
+   * the frequency being matched — they were being asked to compare their
+   * tinnitus against a tone they could not hear. Held here rather than inside
+   * `PitchModule` so a patient who steps back to pitch after loudness finds the
+   * level they set, not a reset one.
+   *
+   * Not submitted: it is how the comparison was presented, not a measurement.
+   * The matched *frequency* is the finding, and that is unchanged.
+   */
+  const [pitchDbHl, setPitchDbHl] = useState(40);
   const [thresholds, setThresholds] = useState<Record<string, number>>(
     () => ({ ...(initial?.masking_thresholds ?? {}) })
   );
@@ -219,6 +244,8 @@ export default function HearingMeasurement({
           hz={pitchHz}
           cents={pitchCents}
           onCents={setPitchCents}
+          dbHl={pitchDbHl}
+          onDbHl={setPitchDbHl}
           handleRef={handleRef}
           stopSound={stopSound}
           onNext={() => markDone("pitch", "loudness")}
@@ -269,6 +296,8 @@ function PitchModule({
   hz,
   cents,
   onCents,
+  dbHl,
+  onDbHl,
   handleRef,
   stopSound,
   onNext,
@@ -276,6 +305,8 @@ function PitchModule({
   hz: number;
   cents: number;
   onCents(v: number): void;
+  dbHl: number;
+  onDbHl(v: number): void;
   handleRef: React.MutableRefObject<{ stop(f?: number): void } | null>;
   stopSound(): void;
   onNext(): void;
@@ -291,12 +322,12 @@ function PitchModule({
     stopSound();
     handleRef.current = engine.playTone({
       freq: hz,
-      dbHL: 40,
+      dbHL: dbHl,
       ear: "both",
       durationMs: null,
       rampMs: 25,
     });
-  }, [hz, playing, handleRef, stopSound]);
+  }, [hz, dbHl, playing, handleRef, stopSound]);
 
   async function toggle() {
     if (playing) {
@@ -316,6 +347,11 @@ function PitchModule({
             {t("hearing.pitch.instructions")}
           </p>
 
+          {/* The stimulus is a property of the procedure, not a choice. Stated
+              so the operator can see it, fixed so it cannot be set wrong — a
+              pitch match made with noise is not a pitch match. */}
+          <Chip tone="ghost">{t("hearing.stimulus.pureTone")}</Chip>
+
           <Readout
             label={t("hearing.pitch.current")}
             value={(hz / 1000).toFixed(2)}
@@ -333,8 +369,26 @@ function PitchModule({
             onChange={onCents}
             format={(c) => pitchLabel(hzFromCents(c))}
             ariaLabel={t("hearing.pitch.slider")}
-            lowLabel="125 Hz"
-            highLabel="8 kHz"
+            lowLabel="250 Hz"
+            highLabel="12 kHz"
+          />
+
+          {/* Level, capped at what these headphones can actually deliver at the
+              frequency currently selected — `maxReachableHl` falls away at the
+              top of the range, and offering a level the hardware cannot produce
+              would mean a slider that silently stops doing anything. */}
+          <SteppedSlider
+            value={Math.min(dbHl, Math.round(engine.maxReachableHl(hz)))}
+            min={0}
+            max={Math.min(90, Math.round(engine.maxReachableHl(hz)))}
+            step={1}
+            onChange={onDbHl}
+            format={(v) => `${v} dB HL`}
+            label={t("hearing.pitch.level")}
+            ariaLabel={t("hearing.pitch.levelSlider")}
+            lowLabel={t("hearing.loudness.quiet")}
+            highLabel={t("hearing.loudness.loud")}
+            tone="data"
           />
 
           <div className="row">
@@ -369,6 +423,9 @@ function PitchModule({
 }
 
 /* ======================================================= 2 · loudness === */
+/* The loudness module is unchanged apart from stating its stimulus — see the
+   note in `PitchModule`. Its level control, its pitch source and its save
+   behaviour are all exactly as they were. */
 function LoudnessModule({
   pitchHz,
   dbHl,
@@ -506,7 +563,27 @@ function MaskingModule({
   const [level, setLevel] = useState(startDbHl);
   const [playing, setPlaying] = useState(false);
 
-  const hz = MASKING_FREQUENCIES[index];
+  /**
+   * The centre frequency of the masking band, as a free control.
+   *
+   * The eight-frequency walk is unchanged and still drives the procedure — this
+   * only decouples "which frequency am I testing" from "which preset am I on",
+   * so a frequency between the presets, or one right at the tinnitus pitch, can
+   * be tested and recorded too. Selecting a preset cell still snaps the slider
+   * to it, so the default path through the module is exactly what it was.
+   *
+   * Stepped in cents for the same reason the pitch slider is: linear hertz gives
+   * unusable resolution at 250 Hz and pointless precision at 8 kHz. 250 Hz is
+   * cents 0, so the range here is 0-6000 cents.
+   */
+  const [freqCents, setFreqCents] = useState(() => centsFromHz(MASKING_FREQUENCIES[0]));
+  const hz = Math.round(hzFromCents(freqCents));
+
+  // Selecting a preset — by clicking a cell or by the automatic advance — snaps
+  // the slider onto it. The walk is preserved; the slider follows it.
+  useEffect(() => {
+    setFreqCents(centsFromHz(MASKING_FREQUENCIES[index]));
+  }, [index]);
   const ceiling = Math.min(95, Math.round(engine.maxReachableHl(hz)));
   const recorded = thresholds[String(hz)];
   const isUnmaskable = unmasked.includes(hz);
@@ -548,6 +625,22 @@ function MaskingModule({
     setPlaying(false);
     if (index < MASKING_FREQUENCIES.length - 1) setIndex(index + 1);
   }
+
+  /**
+   * Every frequency the curve should plot: the eight presets, plus anything
+   * measured off-preset with the slider. Union rather than replacement, so the
+   * standard eight always appear as the shape of the procedure even before they
+   * are answered.
+   */
+  const curveFrequencies = Array.from(
+    new Set<number>([
+      ...MASKING_FREQUENCIES,
+      ...Object.keys(thresholds).map(Number),
+      ...unmasked,
+    ])
+  )
+    .filter((f) => Number.isFinite(f) && f > 0)
+    .sort((a, b) => a - b);
 
   const testedCount = MASKING_FREQUENCIES.filter(
     (f) => thresholds[String(f)] !== undefined || unmasked.includes(f)
@@ -591,6 +684,8 @@ function MaskingModule({
 
           <div className="grid grid-sidebar" style={{ ["--aside" as string]: "260px" }}>
             <div className="stack stack-4">
+              <Chip tone="ghost">{t("hearing.stimulus.narrowband")}</Chip>
+
               <Readout
                 label={t("hearing.masking.testing")}
                 value={hz >= 1000 ? (hz / 1000).toFixed(hz % 1000 === 0 ? 0 : 1) : hz}
@@ -601,6 +696,19 @@ function MaskingModule({
                   current: index + 1,
                   total: MASKING_FREQUENCIES.length,
                 })}
+              />
+
+              <SteppedSlider
+                value={freqCents}
+                min={0}
+                max={MASK_MAX_CENTS}
+                step={CENTS_STEP}
+                onChange={setFreqCents}
+                format={(c) => pitchLabel(hzFromCents(c))}
+                label={t("hearing.masking.frequency")}
+                ariaLabel={t("hearing.masking.frequencySlider")}
+                lowLabel="250 Hz"
+                highLabel="8 kHz"
               />
 
               <SteppedSlider
@@ -711,7 +819,7 @@ function MaskingModule({
       {testedCount >= 2 && (
         <Panel title={t("masking.chart.title")} bracketed>
           <MaskingCurve
-            curve={MASKING_FREQUENCIES.map((f) => ({
+            curve={curveFrequencies.map((f) => ({
               hz: f,
               threshold_db: thresholds[String(f)] ?? null,
               masked: unmasked.includes(f) ? false : thresholds[String(f)] !== undefined ? true : null,

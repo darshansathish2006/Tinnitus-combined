@@ -211,6 +211,13 @@ class AssessmentSubmitSerializer(serializers.Serializer):
     loudness_match_db_sl = serializers.FloatField(required=False, allow_null=True, min_value=0, max_value=80)
     loudness_match_db_hl = serializers.FloatField(required=False, allow_null=True, min_value=-10, max_value=130)
     mml_db_sl = serializers.FloatField(required=False, allow_null=True, min_value=0, max_value=90)
+    # Bounded to the band the audiometer can actually deliver a masker in.
+    mml_masker_hz = serializers.FloatField(required=False, allow_null=True, min_value=50, max_value=20000)
+    # The patient's own answer after the masker stops. Constrained rather than
+    # free text so it can be counted across a cohort.
+    ri_reported_category = serializers.ChoiceField(
+        choices=["none", "partial", "complete"], required=False, allow_blank=True
+    )
     ri_depth_pct = serializers.FloatField(required=False, allow_null=True, min_value=-100, max_value=100)
     ri_duration_s = serializers.FloatField(required=False, allow_null=True, min_value=0, max_value=1800)
     ri_trace = serializers.ListField(required=False)

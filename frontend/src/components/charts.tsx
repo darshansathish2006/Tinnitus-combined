@@ -1319,3 +1319,262 @@ export function MaskingCurve({
     </svg>
   );
 }
+
+/* ------------------------------------------------------------------------- */
+/* Combined audiogram + masking curve                                         */
+/* ------------------------------------------------------------------------- */
+/**
+ * Hearing thresholds and the tinnitus masking curve on one set of axes.
+ *
+ * Separately, each chart answers half a question. The audiogram says where the
+ * hearing loss is; the masking curve says how much noise it takes to cover the
+ * percept at each frequency. What a clinician actually reads is the *distance
+ * between them* — a masking curve that tracks the audiogram a few dB above it
+ * is a maskable tinnitus with a normal sensation-level profile, while one that
+ * diverges sharply, or sits far above threshold only around the tinnitus pitch,
+ * is the shape that argues for a notch rather than broadband masking. That
+ * comparison cannot be made by looking at two pictures in turn.
+ *
+ * Deliberately a *new* component rather than an option on `Audiogram` or
+ * `MaskingCurve`: both of those are used in several places and are correct as
+ * they are, and neither should acquire a mode that changes what it draws.
+ *
+ * Conventions follow the audiogram, because that is the chart a clinician reads
+ * fluently: log-frequency abscissa, inverted dB ordinate with quiet at the top,
+ * red circles for right and blue crosses for left. The masking curve is drawn in
+ * the signal colour with square markers so it cannot be mistaken for a threshold
+ * trace at a glance.
+ *
+ * The upper frequency bound is 12.5 kHz rather than the audiogram's 9.2 kHz,
+ * because pitch matching now reaches 12 kHz and a percept matched up there must
+ * still have somewhere to be drawn.
+ */
+export function CombinedAudiogramMasking({
+  audiogram,
+  curve,
+  pitchHz,
+  height = 360,
+  showLegend = true,
+}: {
+  /** `{ left: {"250": 15, …}, right: {…} }` in dB HL — the same shape `Audiogram` takes. */
+  audiogram: Record<string, Record<string, number>> | null | undefined;
+  /** Per-frequency minimum masking levels, as `MaskingCurve` takes them. */
+  curve: { hz: number; threshold_db: number | null; masked: boolean | null; tested: boolean }[];
+  pitchHz?: number | null;
+  height?: number;
+  showLegend?: boolean;
+}) {
+  const { t } = useTranslation();
+  const pad = { top: 26, right: 20, bottom: 38, left: 48 };
+  const width = 620;
+  const plotW = width - pad.left - pad.right;
+  const plotH = height - pad.top - pad.bottom;
+
+  const fMin = Math.log2(110);
+  const fMax = Math.log2(12500);
+  const x = (hz: number) => pad.left + ((Math.log2(hz) - fMin) / (fMax - fMin)) * plotW;
+  const y = (db: number) => pad.top + ((db + 10) / 130) * plotH;
+
+  const ears = (["right", "left"] as const).map((ear) => {
+    const raw = audiogram?.[ear] ?? {};
+    const points = Object.entries(raw)
+      .map(([hz, db]) => ({ hz: Number(hz), db: Number(db) }))
+      .filter((pt) => Number.isFinite(pt.hz) && Number.isFinite(pt.db) && pt.hz >= 110 && pt.hz <= 12500)
+      .sort((a, b) => a.hz - b.hz);
+    return { ear, points, color: ear === "right" ? "var(--ear-right)" : "var(--ear-left)" };
+  });
+
+  const masked = curve
+    .filter((pt): pt is typeof pt & { threshold_db: number } =>
+      pt.threshold_db !== null && pt.masked === true && pt.hz >= 110 && pt.hz <= 12500
+    )
+    .sort((a, b) => a.hz - b.hz);
+  const unmaskable = curve.filter((pt) => pt.tested && pt.masked === false);
+
+  const hasThresholds = ears.some((e) => e.points.length > 0);
+  const hasMasking = masked.length > 0;
+
+  // An empty state rather than empty axes. A chart drawn with no data on it
+  // looks like a measurement that came back flat, which is a different and
+  // much worse message than "this was not measured".
+  if (!hasThresholds && !hasMasking) {
+    return <p className="meta">{t("masking.combined.empty")}</p>;
+  }
+
+  const maskLine = masked.map((pt, i) => `${i === 0 ? "M" : "L"}${x(pt.hz)},${y(pt.threshold_db)}`).join(" ");
+
+  return (
+    <figure style={{ margin: 0 }}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        style={{ width: "100%", height: "auto" }}
+        role="img"
+        aria-label={t("masking.combined.label")}
+      >
+        {GRADE_BANDS.map((band, i) => (
+          <rect
+            key={band.label}
+            x={pad.left}
+            y={y(band.from)}
+            width={plotW}
+            height={y(band.to) - y(band.from)}
+            fill={i % 2 === 0 ? "var(--paper-sunken)" : "var(--paper-deep)"}
+            opacity={0.55}
+          />
+        ))}
+
+        {/* Normal-hearing reference, as on the audiogram. */}
+        <rect x={pad.left} y={y(-10)} width={plotW} height={y(20) - y(-10)} fill="var(--ok)" opacity={0.08} />
+
+        {AUDIO_TICKS.filter((db) => db % 20 === 0).map((db) => (
+          <g key={db}>
+            <line
+              x1={pad.left}
+              x2={pad.left + plotW}
+              y1={y(db)}
+              y2={y(db)}
+              stroke="var(--line)"
+              strokeWidth={0.4}
+              opacity={0.55}
+            />
+            <text
+              x={pad.left - 6}
+              y={y(db) + 3}
+              textAnchor="end"
+              fill="var(--ink-4)"
+              fontSize="8"
+              fontFamily="var(--font-mono)"
+            >
+              {db}
+            </text>
+          </g>
+        ))}
+
+        {[125, 250, 500, 1000, 2000, 4000, 8000, 12000].map((hz) => (
+          <g key={hz}>
+            <line
+              x1={x(hz)}
+              x2={x(hz)}
+              y1={pad.top}
+              y2={pad.top + plotH}
+              stroke="var(--line)"
+              strokeWidth={0.4}
+              opacity={0.4}
+            />
+            <text
+              x={x(hz)}
+              y={pad.top + plotH + 14}
+              textAnchor="middle"
+              fill="var(--ink-4)"
+              fontSize="8"
+              fontFamily="var(--font-mono)"
+            >
+              {hz >= 1000 ? `${hz / 1000}k` : hz}
+            </text>
+          </g>
+        ))}
+
+        {/* The tinnitus pitch, behind both traces so it never hides a marker. */}
+        {pitchHz ? (
+          <g>
+            <line
+              x1={x(pitchHz)}
+              x2={x(pitchHz)}
+              y1={pad.top}
+              y2={pad.top + plotH}
+              stroke="var(--signal)"
+              strokeWidth={1.2}
+              strokeDasharray="3 3"
+              opacity={0.75}
+            />
+            <text
+              x={x(pitchHz)}
+              y={pad.top - 8}
+              textAnchor="middle"
+              fill="var(--signal-ink)"
+              fontSize="9"
+              fontWeight="700"
+            >
+              {fmt.hzFull(pitchHz)}
+            </text>
+          </g>
+        ) : null}
+
+        {/* Hearing thresholds — audiogram convention. */}
+        {ears.map(({ ear, points, color }) => (
+          <g key={ear}>
+            {points.length > 1 && (
+              <path
+                d={points.map((pt, i) => `${i === 0 ? "M" : "L"}${x(pt.hz)},${y(pt.db)}`).join(" ")}
+                fill="none"
+                stroke={color}
+                strokeWidth={1.6}
+              />
+            )}
+            {points.map((pt) =>
+              ear === "right" ? (
+                <circle
+                  key={pt.hz}
+                  cx={x(pt.hz)}
+                  cy={y(pt.db)}
+                  r={4.5}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={1.8}
+                />
+              ) : (
+                <g key={pt.hz} stroke={color} strokeWidth={1.8}>
+                  <line x1={x(pt.hz) - 4} y1={y(pt.db) - 4} x2={x(pt.hz) + 4} y2={y(pt.db) + 4} />
+                  <line x1={x(pt.hz) + 4} y1={y(pt.db) - 4} x2={x(pt.hz) - 4} y2={y(pt.db) + 4} />
+                </g>
+              )
+            )}
+          </g>
+        ))}
+
+        {/* Masking curve — squares, so it reads as a different measurement. */}
+        {hasMasking && (
+          <g>
+            <path d={maskLine} fill="none" stroke="var(--signal)" strokeWidth={2} strokeDasharray="6 3" />
+            {masked.map((pt) => (
+              <rect
+                key={pt.hz}
+                x={x(pt.hz) - 3.5}
+                y={y(pt.threshold_db) - 3.5}
+                width={7}
+                height={7}
+                fill="var(--signal)"
+                opacity={0.9}
+              />
+            ))}
+          </g>
+        )}
+
+        {/* Frequencies the percept could not be masked at any safe level. */}
+        {unmaskable.map((pt) => (
+          <text
+            key={`u-${pt.hz}`}
+            x={x(pt.hz)}
+            y={pad.top + 12}
+            textAnchor="middle"
+            fill="var(--crit-ink)"
+            fontSize="11"
+            fontWeight="700"
+          >
+            ✕
+          </text>
+        ))}
+      </svg>
+
+      {showLegend && (
+        <ChartLegend
+          items={[
+            { label: t("masking.combined.right"), color: "var(--ear-right)" },
+            { label: t("masking.combined.left"), color: "var(--ear-left)" },
+            { label: t("masking.combined.masking"), color: "var(--signal)", dashed: true },
+          ]}
+        />
+      )}
+    </figure>
+  );
+}

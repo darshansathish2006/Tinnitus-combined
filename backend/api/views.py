@@ -713,6 +713,7 @@ def apply_submission(assessment: Assessment, data: dict[str, Any]) -> None:
         "octave_confusion", "tinnitus_bandwidth", "pitch_match_ear",
         "pitch_match_trace", "ri_trace",
         "masking_thresholds", "masking_unmasked_hz",
+        "mml_masker_hz", "ri_reported_category",
         "audiometry_reliable", "audiometry_notes", "audiometry_false_positives",
         "audiometry_catch_trials", "audiometry_retest_agreement_db",
     ):
@@ -3101,8 +3102,19 @@ def report_clinical(request):
                 "octave_confusion": assessment.octave_confusion,
                 "loudness_match_db_sl": assessment.loudness_match_db_sl,
                 "mml_db_sl": assessment.mml_db_sl,
+                "mml_masker_hz": assessment.mml_masker_hz,
                 "maskability": result["derived"].get("maskability"),
                 "residual_inhibition": result["derived"].get("residual_inhibition"),
+                # What the patient reported when the masker stopped, beside the
+                # grade the trace was scored into. Both, never one instead of
+                # the other — see the model.
+                "ri_reported_category": assessment.ri_reported_category or None,
+                "ri_category": assessment.ri_category or None,
+                # The masking curve itself. The report previously carried the
+                # derived reference level but not the per-frequency measurements
+                # it was derived from, so the curve could not be drawn anywhere
+                # except inside the assessment module that collected it.
+                "masking": masking_analysis(assessment),
                 "bandwidth": assessment.tinnitus_bandwidth or None,
                 "ldl_left": assessment.ldl_left,
                 "ldl_right": assessment.ldl_right,

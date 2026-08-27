@@ -229,10 +229,24 @@ class Assessment(models.Model):
     loudness_match_db_sl = models.FloatField(null=True, blank=True)
     loudness_match_db_hl = models.FloatField(null=True, blank=True)
     mml_db_sl = models.FloatField(null=True, blank=True)
+    # The centre frequency the masking band was actually set to when the MML was
+    # taken. Null means it was measured at the tinnitus pitch, which is what the
+    # procedure did before the frequency became adjustable — so old records keep
+    # their original meaning without a data migration.
+    mml_masker_hz = models.FloatField(null=True, blank=True)
     ri_depth_pct = models.FloatField(null=True, blank=True)
     ri_duration_s = models.FloatField(null=True, blank=True)
     ri_trace = models.JSONField(default=list, blank=True)
+    # Derived server-side from `ri_depth_pct` by `classify_residual_inhibition`
+    # — the algorithm's grade (Complete / Partial / Minimal / Absent / Rebound).
     ri_category = models.CharField(max_length=24, blank=True, default="")
+    # What the *patient* said, which is a different fact from what the trace
+    # implies and is kept separately rather than overwriting it. A patient who
+    # reports "complete" while the trace shows a 30% dip is a finding — the two
+    # disagreeing is information, and collapsing them into one column would
+    # destroy it. Blank on every record written before this existed, which reads
+    # correctly as "not asked".
+    ri_reported_category = models.CharField(max_length=24, blank=True, default="")
     tinnitus_bandwidth = models.CharField(max_length=24, choices=Bandwidth.choices, blank=True, default="")
     ldl_left = models.FloatField(null=True, blank=True)
     ldl_right = models.FloatField(null=True, blank=True)

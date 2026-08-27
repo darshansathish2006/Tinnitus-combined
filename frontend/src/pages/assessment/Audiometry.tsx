@@ -19,7 +19,10 @@ import { engine } from "../../audio/engine";
 import { ThresholdTracker, shouldInsertCatchTrial, type Ear, type TrackerResult } from "../../audio/procedures";
 import { Audiogram } from "../../components/charts";
 import { Chip, Kbd, Panel, Readout, useHotkey } from "../../components/ui";
-import { IconCheck } from "../../components/icons";
+import { IconCheck, IconPlay, IconStop } from "../../components/icons";
+// The audiometer's frequency and level controls reuse the assessment's own
+// slider so manual mode is visually identical to the tinnitus modules.
+import { SteppedSlider } from "./HearingMeasurement";
 
 /**
  * Octave frequencies, 1 kHz first because it is the most reliably matched and
@@ -85,6 +88,24 @@ export default function Audiometry({
   const { t } = useTranslation();
   const [ear, setEar] = useState<Ear>("right");
   const [stepIndex, setStepIndex] = useState(0);
+  /**
+   * Guided or manual.
+   *
+   * "guided" is the existing procedure and the default: the adaptive tracker
+   * chooses the level, inserts catch trials and retests 1 kHz, and the patient
+   * only answers "I heard it". Nothing about it changes.
+   *
+   * "manual" hands frequency and level to the operator, which is what an
+   * audiometer does and what a student learning the procedure needs to practise.
+   * It writes into the same `audiogram` state, so a threshold taken by hand is
+   * indistinguishable downstream from one the tracker found — same shape, same
+   * audiogram, same report, same cochlea.
+   *
+   * They are alternatives rather than a merge because the two disagree about
+   * who decides the level, and a control that sometimes moves on its own is
+   * worse than either.
+   */
+  const [mode, setMode] = useState<"guided" | "manual">("guided");
   const [phase, setPhase] = useState<Phase>("idle");
   const [audiogram, setAudiogram] = useState<Record<Ear, Record<string, number>>>(() => ({
     left: { ...(initialAudiogram?.left ?? {}) },
@@ -136,7 +157,21 @@ export default function Audiometry({
     let sideThresholds = audiogram[ear];
     if (result.thresholdDbHl !== null) {
       sideThresholds = { ...sideThresholds, [String(freq)]: result.thresholdDbHl };
-      setAudiogram((prev) => ({ ...prev, [ear]: sideThresholds }));
+      // Merged from `prev`, not from the closure's copy of `audiogram`.
+      //
+      // `sideThresholds` is still needed below for the inter-octave decision,
+      // which wants the thresholds *including* the one just measured. But using
+      // it as the new state would overwrite this ear's whole map with whatever
+      // the closure captured — and this runs from a `setTimeout` chain, so the
+      // closure is one the scheduler is holding rather than necessarily the
+      // latest. It happens to be current today because the operator presses
+      // Start once per frequency, which rebuilds the chain each time; it would
+      // silently start dropping thresholds the moment the test auto-advanced.
+      // Merging costs nothing and does not depend on that remaining true.
+      setAudiogram((prev) => ({
+        ...prev,
+        [ear]: { ...(prev[ear] ?? {}), [String(freq)]: result.thresholdDbHl as number },
+      }));
       if (freq === 1000) {
         setRetest((prev) =>
           prev.first === null
@@ -365,6 +400,59 @@ export default function Audiometry({
 
   return (
     <div className="stack stack-5">
+      {/* Guided is the default and the clinical procedure; manual is the
+          audiometer. One or the other, never both driving the audio at once. */}
+      <div className="row row--between row--wrap">
+        <div className="btn-group">
+          <button
+            type="button"
+            className="btn btn--sm"
+            aria-pressed={mode === "guided"}
+            onClick={() => {
+              clearTimers();
+              engine.stopAll(0.05);
+              setMode("guided");
+            }}
+          >
+            {t("audiometry.modeGuided")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--sm"
+            aria-pressed={mode === "manual"}
+            onClick={() => {
+              clearTimers();
+              engine.stopAll(0.05);
+              setMode("manual");
+            }}
+          >
+            {t("audiometry.modeManual")}
+          </button>
+        </div>
+        <Chip tone="ghost">{t("audiometry.stimulusPureTone")}</Chip>
+      </div>
+
+      {mode === "manual" ? (
+        <ManualThreshold
+          audiogram={audiogram}
+          ear={ear}
+          onEar={setEar}
+          onRecord={(side, freqHz, dbHl) =>
+            setAudiogram((prev) => ({
+              ...prev,
+              [side]: { ...(prev[side] ?? {}), [String(freqHz)]: dbHl },
+            }))
+          }
+          onClear={(side, freqHz) =>
+            setAudiogram((prev) => {
+              const next = { ...(prev[side] ?? {}) };
+              delete next[String(freqHz)];
+              return { ...prev, [side]: next };
+            })
+          }
+          onDone={complete}
+        />
+      ) : (
       <div className="grid grid-sidebar" style={{ ["--aside" as string]: "300px" }}>
         {/* -- test panel ----------------------------------------------------- */}
         <Panel bracketed>
@@ -614,6 +702,213 @@ export default function Audiometry({
             </Panel>
           )}
         </div>
+      </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------------- */
+/* Manual mode — the audiometer                                               */
+/* ------------------------------------------------------------------------- */
+/**
+ * Frequency and level under the operator's hand, with a button to record the
+ * threshold at the current setting.
+ *
+ * The frequency slider steps through the standard audiometric ladder rather
+ * than sweeping continuously. That is deliberate on two counts: it is what an
+ * audiometer offers, and it keeps the keys of the stored audiogram to the
+ * frequencies every downstream consumer already understands — the WHO grading,
+ * the notch detector, the Greenwood placement in the 3D cochlea and the report's
+ * own tables all read specific frequencies, and a threshold recorded at 1373 Hz
+ * would be stored faithfully and then ignored by all of them.
+ *
+ * Level steps in 5 dB, the audiometric convention and the same step the adaptive
+ * tracker ascends in.
+ */
+const MANUAL_FREQS = [250, 500, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000];
+
+function ManualThreshold({
+  audiogram,
+  ear,
+  onEar,
+  onRecord,
+  onClear,
+  onDone,
+}: {
+  audiogram: Record<Ear, Record<string, number>>;
+  ear: Ear;
+  onEar(ear: Ear): void;
+  onRecord(ear: Ear, hz: number, dbHl: number): void;
+  onClear(ear: Ear, hz: number): void;
+  onDone(): void;
+}) {
+  const { t } = useTranslation();
+  const [freqIndex, setFreqIndex] = useState(3); // 1 kHz — where audiometry starts
+  const [level, setLevel] = useState(40);
+  const [playing, setPlaying] = useState(false);
+  const handleRef = useRef<{ stop(f?: number): void } | null>(null);
+
+  const hz = MANUAL_FREQS[freqIndex];
+  const ceiling = Math.min(90, Math.round(engine.maxReachableHl(hz)));
+  const recorded = audiogram[ear]?.[String(hz)];
+
+  const stop = useCallback(() => {
+    handleRef.current?.stop(0.05);
+    handleRef.current = null;
+    engine.stopAll(0.05);
+  }, []);
+
+  useEffect(() => () => stop(), [stop]);
+
+  // A continuous tone that follows the sliders, so frequency and level can be
+  // hunted the way they are on a real audiometer rather than re-triggered for
+  // every step.
+  useEffect(() => {
+    if (!playing) return;
+    stop();
+    handleRef.current = engine.playTone({
+      freq: hz,
+      dbHL: Math.min(level, ceiling),
+      ear,
+      durationMs: null,
+      rampMs: 25,
+    });
+  }, [hz, level, ear, ceiling, playing, stop]);
+
+  const measuredCount =
+    Object.keys(audiogram.left ?? {}).length + Object.keys(audiogram.right ?? {}).length;
+
+  return (
+    <div className="grid grid-sidebar" style={{ ["--aside" as string]: "300px" }}>
+      <Panel bracketed title={t("audiometry.manualTitle")}>
+        <div className="stack stack-5">
+          <p className="meta" style={{ maxWidth: "48em" }}>
+            {t("audiometry.manualLead")}
+          </p>
+
+          <div className="row row--tight">
+            {(["right", "left"] as const).map((side) => (
+              <button
+                key={side}
+                type="button"
+                className={`btn btn--sm${ear === side ? " btn--primary" : ""}`}
+                aria-pressed={ear === side}
+                onClick={() => {
+                  stop();
+                  setPlaying(false);
+                  onEar(side);
+                }}
+              >
+                {t(side === "left" ? "audiometry.leftEar" : "audiometry.rightEar")}
+              </button>
+            ))}
+          </div>
+
+          <Readout
+            label={t("audiometry.testFrequency")}
+            value={hz >= 1000 ? hz / 1000 : hz}
+            unit={hz >= 1000 ? "kHz" : "Hz"}
+            size="lg"
+            tone="data"
+            note={t("audiometry.manualRecorded", {
+              value: recorded === undefined ? "—" : `${recorded} dB HL`,
+            })}
+          />
+
+          <SteppedSlider
+            value={freqIndex}
+            min={0}
+            max={MANUAL_FREQS.length - 1}
+            step={1}
+            onChange={setFreqIndex}
+            format={(i) => {
+              const f = MANUAL_FREQS[i];
+              return f >= 1000 ? `${f / 1000} kHz` : `${f} Hz`;
+            }}
+            label={t("audiometry.manualFrequency")}
+            ariaLabel={t("audiometry.manualFrequency")}
+            lowLabel="250 Hz"
+            highLabel="8 kHz"
+          />
+
+          <SteppedSlider
+            value={Math.min(level, ceiling)}
+            min={-10}
+            max={ceiling}
+            step={5}
+            onChange={setLevel}
+            format={(v) => `${v} dB HL`}
+            label={t("audiometry.manualLevel")}
+            ariaLabel={t("audiometry.manualLevel")}
+            lowLabel={t("audiometry.manualQuiet")}
+            highLabel={t("audiometry.manualLoud")}
+            tone="data"
+          />
+
+          <div className="row row--tight row--wrap">
+            <button
+              type="button"
+              className={`btn ${playing ? "" : "btn--primary"}`}
+              onClick={async () => {
+                if (playing) {
+                  stop();
+                  setPlaying(false);
+                  return;
+                }
+                await engine.resume();
+                setPlaying(true);
+              }}
+            >
+              {playing ? <IconStop size={15} /> : <IconPlay size={15} />}
+              {t(playing ? "audiometry.manualStop" : "audiometry.manualPlay")}
+            </button>
+
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => {
+                onRecord(ear, hz, Math.min(level, ceiling));
+                stop();
+                setPlaying(false);
+              }}
+            >
+              <IconCheck size={14} />
+              {t("audiometry.manualRecord")}
+            </button>
+
+            {recorded !== undefined && (
+              <button type="button" className="btn btn--ghost btn--sm" onClick={() => onClear(ear, hz)}>
+                {t("audiometry.manualClear")}
+              </button>
+            )}
+          </div>
+
+          <hr className="rule" />
+
+          <div className="row row--between">
+            <span className="meta">
+              {t("audiometry.measuredSummary", { measured: measuredCount, total: MANUAL_FREQS.length * 2 })}
+            </span>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={() => {
+                stop();
+                onDone();
+              }}
+              disabled={measuredCount === 0}
+            >
+              {t("audiometry.saveAndContinue")}
+            </button>
+          </div>
+        </div>
+      </Panel>
+
+      <div className="stack stack-4">
+        <Panel title={t("audiometry.liveAudiogram")} tight headPlain>
+          <Audiogram audiogram={audiogram} height={280} showLegend />
+        </Panel>
       </div>
     </div>
   );

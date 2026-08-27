@@ -479,6 +479,12 @@ export default function Assessment() {
           ri_depth_pct: result.ri_depth_pct,
           ri_duration_s: result.ri_duration_s,
           ri_trace: result.ri_trace,
+          // The patient's own verdict and the masker frequency travel with the
+          // measurements they qualify. Both are optional on the serializer, so
+          // a run that skipped the question or left the band on-pitch submits
+          // the same payload it always did.
+          ri_reported_category: result.ri_reported_category,
+          mml_masker_hz: result.mml_masker_hz,
         },
         ["pitch_match", "loudness_match", "mml", "residual_inhibition"]
       );

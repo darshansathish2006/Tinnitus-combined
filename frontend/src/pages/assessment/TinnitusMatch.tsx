@@ -32,7 +32,7 @@ import {
 } from "../../audio/procedures";
 import { RiCurve } from "../../components/charts";
 import { Chip, Fader, OptionGroup, Panel, Readout, StepRail, fmt } from "../../components/ui";
-import { IconPlay, IconStop } from "../../components/icons";
+import { IconCheck, IconPlay, IconStop } from "../../components/icons";
 
 export interface MatchResult {
   tinnitus_bandwidth: "tonal" | "narrowband" | "broadband";
@@ -50,6 +50,10 @@ export interface MatchResult {
   ri_depth_pct: number | null;
   ri_duration_s: number | null;
   ri_trace: RiSample[];
+  /** The patient's own answer after the masker stopped; "" when not asked. */
+  ri_reported_category: "" | "none" | "partial" | "complete";
+  /** Masker centre frequency, null when it was left at the tinnitus pitch. */
+  mml_masker_hz: number | null;
 }
 
 const SUBSTEP_KEYS = ["character", "pitch", "loudness", "limits", "ri"];
@@ -103,6 +107,20 @@ export default function TinnitusMatch({
 
   const [loudnessDbHl, setLoudnessDbHl] = useState(20);
   const [mmlDbHl, setMmlDbHl] = useState(30);
+  /**
+   * Centre frequency of the masking band, as an adjustable control.
+   *
+   * `null` means "follow the matched tinnitus pitch", which is what the
+   * procedure did before this was adjustable and remains the default — so a
+   * clinician who never touches the slider gets exactly the previous behaviour,
+   * and `mml_masker_hz` is submitted as null for those runs rather than as a
+   * value that only looks deliberate.
+   *
+   * It is worth being able to move: the minimum masking level is not always
+   * lowest at the tinnitus frequency, and a band placed half an octave away can
+   * mask a percept at a level several dB below what the on-pitch band needs.
+   */
+  const [mmlHzOverride, setMmlHzOverride] = useState<number | null>(null);
   const [ldl, setLdl] = useState<{ left: number | null; right: number | null }>({ left: null, right: null });
   const [ldlProbe, setLdlProbe] = useState(70);
   const [ldlEar, setLdlEar] = useState<"left" | "right">("right");
@@ -111,6 +129,18 @@ export default function TinnitusMatch({
   const [riIndex, setRiIndex] = useState(0);
   const [riTrace, setRiTrace] = useState<RiSample[]>([]);
   const [riCurrent, setRiCurrent] = useState(100);
+  /**
+   * What the patient says happened, as three categories.
+   *
+   * Kept entirely separate from the 0-100% trace and from the graded
+   * `ri_category` the server derives from it. The trace measures how loud the
+   * tinnitus was at nine time points; this records the answer to "has it gone
+   * down?" — and the two can legitimately disagree. A patient who reports
+   * complete abolition while the trace shows a 30% dip is telling you something
+   * about how they experience the percept that the numbers do not, and
+   * collapsing the two into one value would throw that away.
+   */
+  const [riReported, setRiReported] = useState<"none" | "partial" | "complete" | null>(null);
   const [maskCountdown, setMaskCountdown] = useState(0);
 
   const handleRef = useRef<{ stop(f?: number): void; setLevelDb(db: number, r?: number): void } | null>(null);
@@ -120,6 +150,17 @@ export default function TinnitusMatch({
   const referenceEar = laterality === "left" ? "left" : "right";
   const pitchHz = pitchResult?.hz ?? null;
   const thresholdDbHl = pitchHz ? thresholdAt(audiogram, referenceEar, pitchHz) : null;
+  /** The frequency the masker is actually centred on right now. */
+  const mmlHz = mmlHzOverride ?? pitchHz ?? null;
+  /**
+   * Threshold at the *masker's* frequency, not the tinnitus pitch.
+   *
+   * A sensation level is only meaningful against the threshold at the frequency
+   * it was measured at. Keeping the pitch threshold here once the band could be
+   * moved would have quietly mis-stated the MML by the difference between the
+   * two thresholds — which on a sloping loss is easily 30 dB.
+   */
+  const mmlThresholdDbHl = mmlHz ? thresholdAt(audiogram, referenceEar, mmlHz) : null;
 
   useEffect(
     () => () => {
@@ -256,17 +297,22 @@ export default function TinnitusMatch({
       pitch_match_ear: matchEar === "both" ? "both" : (matchEar as "left" | "right"),
       loudness_match_db_hl: pitchHz ? loudnessDbHl : null,
       loudness_match_db_sl: pitchHz ? toSensationLevel(loudnessDbHl, thresholdDbHl) : null,
-      mml_db_sl: pitchHz ? toSensationLevel(mmlDbHl, thresholdDbHl) : null,
+      mml_db_sl: pitchHz ? toSensationLevel(mmlDbHl, mmlThresholdDbHl ?? thresholdDbHl) : null,
       ldl_left: ldl.left,
       ldl_right: ldl.right,
       ri_depth_pct: analysis?.depthPct ?? null,
       ri_duration_s: analysis?.durationS ?? null,
       ri_trace: riTrace,
+      ri_reported_category: riReported ?? "",
+      // Null unless the clinician actually moved the band off the pitch, so an
+      // untouched run is recorded as having been measured at the tinnitus
+      // frequency rather than being given a redundant explicit value.
+      mml_masker_hz: mmlHzOverride,
     });
   }
 
   const loudnessSl = toSensationLevel(loudnessDbHl, thresholdDbHl);
-  const mmlSl = toSensationLevel(mmlDbHl, thresholdDbHl);
+  const mmlSl = toSensationLevel(mmlDbHl, mmlThresholdDbHl ?? thresholdDbHl);
 
   return (
     <div className="stack stack-5">
@@ -714,16 +760,48 @@ export default function TinnitusMatch({
                     <Trans i18nKey="match.mmlLead" components={[<strong key="0" />]} />
                   </p>
 
+                  <div className="row row--tight">
+                    <Chip tone="ghost">{t("match.stimulusNarrowband")}</Chip>
+                    {mmlHzOverride !== null && (
+                      <button
+                        type="button"
+                        className="btn btn--sm btn--ghost"
+                        onClick={() => setMmlHzOverride(null)}
+                      >
+                        {t("match.maskerFreqReset")}
+                      </button>
+                    )}
+                  </div>
+
+                  <Fader
+                    label={t("match.maskerFrequency")}
+                    value={mmlHz ?? pitchHz}
+                    min={250}
+                    max={12000}
+                    step={50}
+                    unit="Hz"
+                    onChange={(value) => {
+                      setMmlHzOverride(value);
+                      // Restart rather than retune: a band-pass centre cannot be
+                      // swept on a running node without an audible artefact, and
+                      // the masker is a clinical stimulus, not a sound effect.
+                      stopSound();
+                    }}
+                    tone="data"
+                    lowLabel="250 Hz"
+                    highLabel="12 kHz"
+                  />
+
                   <Fader
                     label={t("match.maskerLevel")}
                     value={mmlDbHl}
                     min={-5}
-                    max={Math.min(95, engine.maxReachableHl(pitchHz))}
+                    max={Math.min(95, engine.maxReachableHl(mmlHz ?? pitchHz))}
                     step={1}
                     unit="dB HL"
                     onChange={(value) => {
                       setMmlDbHl(value);
-                      handleRef.current?.setLevelDb(engine.hlToDbfs(value, pitchHz), 0.1);
+                      handleRef.current?.setLevelDb(engine.hlToDbfs(value, mmlHz ?? pitchHz), 0.1);
                     }}
                     tone="data"
                     lowLabel={t("match.inaudible")}
@@ -738,9 +816,9 @@ export default function TinnitusMatch({
                         await engine.resume();
                         stopSound();
                         handleRef.current = engine.playBandNoise({
-                          centreHz: pitchHz,
+                          centreHz: mmlHz ?? pitchHz,
                           bandwidthOctaves: 0.5,
-                          dbfs: engine.hlToDbfs(mmlDbHl, pitchHz),
+                          dbfs: engine.hlToDbfs(mmlDbHl, mmlHz ?? pitchHz),
                           ear: matchEar,
                           fadeInS: 0.6,
                         });
@@ -872,6 +950,30 @@ export default function TinnitusMatch({
 
                 {riPhase === "done" && riAnalysis && (
                   <div className="stack stack-4">
+                    {/* The patient's own answer, asked once the trace is in so
+                        it is a summary of what they experienced rather than a
+                        prediction that then biases the ratings. */}
+                    <Panel tone="sunken" tight>
+                      <div className="stack stack-3">
+                        <span className="label">{t("match.riReportedQuestion")}</span>
+                        <div className="row row--tight row--wrap">
+                          {(["none", "partial", "complete"] as const).map((key) => (
+                            <button
+                              key={key}
+                              type="button"
+                              className={`btn btn--sm${riReported === key ? " btn--primary" : ""}`}
+                              aria-pressed={riReported === key}
+                              onClick={() => setRiReported(key)}
+                            >
+                              {riReported === key && <IconCheck size={13} />}
+                              {t(`match.riReported.${key}`)}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="meta">{t("match.riReportedNote")}</p>
+                      </div>
+                    </Panel>
+
                     <div className="row" style={{ gap: "var(--s8)" }}>
                       <Readout
                         label={t("match.depth")}

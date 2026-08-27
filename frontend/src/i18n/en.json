@@ -1180,7 +1180,21 @@
       "interOctaveAdded_one": "{{count}} inter-octave frequency added because adjacent octaves differed by {{gap}} dB or more (BSA recommended procedure).",
       "interOctaveAdded_other": "{{count}} inter-octave frequencies added because adjacent octaves differed by {{gap}} dB or more (BSA recommended procedure).",
       "interOctaveNone": "No inter-octave testing indicated — adjacent octaves were within {{gap}} dB throughout."
-    }
+    },
+    "modeGuided": "Guided",
+    "modeManual": "Manual",
+    "stimulusPureTone": "Stimulus · Pure tone",
+    "manualTitle": "Manual audiometry",
+    "manualLead": "You set the frequency and the level yourself, present the tone, and record the threshold when the patient responds. Thresholds recorded here appear on the same audiogram and in the same report as the guided test.",
+    "manualFrequency": "Frequency",
+    "manualLevel": "Level",
+    "manualQuiet": "Quiet",
+    "manualLoud": "Loud",
+    "manualPlay": "Present tone",
+    "manualStop": "Stop tone",
+    "manualRecord": "Record threshold",
+    "manualClear": "Clear this frequency",
+    "manualRecorded": "Recorded: {{value}}"
   },
   "procedures": {
     "bandwidth": {
@@ -1320,16 +1334,26 @@
     "category": "Category",
     "skipRi": "Skip residual inhibition",
     "recoveryCurve": "Recovery curve",
-    "curveAppears": "The curve appears as you record ratings."
+    "curveAppears": "The curve appears as you record ratings.",
+    "stimulusNarrowband": "Stimulus · Narrow-band noise",
+    "maskerFrequency": "Masker frequency",
+    "maskerFreqReset": "Back to tinnitus pitch",
+    "riReportedQuestion": "Since the masker stopped, has your tinnitus reduced?",
+    "riReportedNote": "Your own answer is recorded alongside the loudness ratings you just gave. They are kept separately because they can differ, and that difference is itself useful.",
+    "riReported": {
+      "none": "No reduction",
+      "partial": "Partial reduction",
+      "complete": "Complete reduction"
+    }
   },
   "results": {
     "audiometryReview": {
-          "title": "Hearing test review",
-          "flagged": "Flagged for review",
-          "clean": "Measurement clean",
-          "catchTrials": "{{false}} of {{total}} silent checks answered",
-          "retest": "Retest agreed within {{db}} dB",
-          "caveat": "These thresholds should be confirmed by a clinician before treatment decisions are based on them."
+      "title": "Hearing test review",
+      "flagged": "Flagged for review",
+      "clean": "Measurement clean",
+      "catchTrials": "{{false}} of {{total}} silent checks answered",
+      "retest": "Retest agreed within {{db}} dB",
+      "caveat": "These thresholds should be confirmed by a clinician before treatment decisions are based on them."
     },
     "loading": "Loading your assessments",
     "assembling": "Assembling report",
@@ -1486,6 +1510,16 @@
       "distress_class": "Current distress band",
       "dominant_hz": "Predicted dominant frequency",
       "loudness_db_sl": "Predicted perceived loudness"
+    },
+    "maskingOverlay": {
+      "title": "Hearing thresholds with the masking curve",
+      "body": "Your hearing thresholds and the level of noise needed to cover your tinnitus, on the same axes. The gap between the two is what decides whether masking or a notch is the better therapy.",
+      "noMasking": "No masking measurements were recorded for this assessment, so only the hearing thresholds are shown."
+    },
+    "audiogramElsewhere": {
+      "title": "Measured on an earlier assessment",
+      "body": "This assessment has no hearing thresholds on it, but an earlier one does. The report always shows the assessment it belongs to, so the audiogram is not carried across — open that assessment to see it.",
+      "open": "Open the assessment with your audiogram"
     }
   },
   "clinician": {
@@ -2062,7 +2096,9 @@
       "tip": "Most people find it easier to sweep the slider from one end to the other first, get a rough idea, then fine-tune with the buttons. Your tinnitus does not stop while the tone plays — you are comparing the two.",
       "continue": "Continue to loudness",
       "whyTitle": "Why we ask",
-      "whyBody": "The frequency of your tinnitus is what your sound therapy is built around. It decides where a notch is cut and which band a masker sits in — so a good match here makes everything downstream more accurate."
+      "whyBody": "The frequency of your tinnitus is what your sound therapy is built around. It decides where a notch is cut and which band a masker sits in — so a good match here makes everything downstream more accurate.",
+      "level": "Presentation level",
+      "levelSlider": "Pitch tone level in dB HL"
     },
     "loudness": {
       "title": "How loud is your tinnitus?",
@@ -2096,7 +2132,13 @@
       "howBody": "Start quiet and raise the level a step at a time. The point at which your tinnitus disappears is the masking threshold for that frequency. Doing this across eight frequencies shows where your tinnitus is easiest to cover — which is what your therapy sound is built from.",
       "progress": "Frequencies tested",
       "finish": "Finish hearing measurement",
-      "finishPartial": "Finish with what I have done"
+      "finishPartial": "Finish with what I have done",
+      "frequency": "Masker frequency",
+      "frequencySlider": "Masking band centre frequency"
+    },
+    "stimulus": {
+      "pureTone": "Stimulus · Pure tone",
+      "narrowband": "Stimulus · Narrow-band noise"
     }
   },
   "masking": {
@@ -2132,6 +2174,13 @@
         "above_safe": "Covering your tinnitus would need a sound louder than is safe to listen to. Your programme deliberately does not try — it uses low-level enrichment and habituation instead.",
         "unmaskable": "Your tinnitus did not disappear at any level tested. That is a meaningful finding: masking is not the right approach for you, and your programme uses habituation and relaxation instead."
       }
+    },
+    "combined": {
+      "empty": "No hearing thresholds or masking measurements to plot yet.",
+      "label": "Hearing thresholds with the tinnitus masking curve",
+      "right": "Right threshold",
+      "left": "Left threshold",
+      "masking": "Masking level"
     }
   },
   "monitoring": {
