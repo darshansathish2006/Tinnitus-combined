@@ -227,6 +227,66 @@ export default function Audiometry({
     finishFrequency();
   }
 
+  /** Is there a step behind this one? False only on the very first tone. */
+  const canGoBack = !(ear === "right" && stepIndex === 0) && phase !== "done";
+
+  /**
+   * Step back one frequency and re-open it for measurement.
+   *
+   * The subtlety is that going back must not leave the *old* reading behind.
+   * `stepIndex` points at the tone being measured now, so the tone to redo is
+   * the one before it — and its result is already in `results`, its threshold
+   * already in `audiogram`, and if it was 1 kHz it has already been folded into
+   * the retest pair. Re-measuring without unwinding all three would append a
+   * second result for the same frequency: the reliability count would climb, the
+   * retest comparison would use the wrong pair, and "frequencies done" would
+   * exceed the number of frequencies.
+   *
+   * So this removes exactly one reading — the one about to be taken again — and
+   * leaves every other measurement untouched. Crossing back from the left ear's
+   * first tone returns to the right ear's last, including any inter-octave
+   * frequencies that ear turned out to need.
+   */
+  function previousFrequency() {
+    if (!canGoBack) return;
+    clearTimers();
+    engine.stopAll(0.05);
+
+    const targetEar: Ear = stepIndex === 0 ? "right" : ear;
+    const targetSequence = [...CORE_SEQUENCE, ...extraFreqs[targetEar]];
+    const targetIndex = stepIndex === 0 ? targetSequence.length - 1 : stepIndex - 1;
+    const targetFreq = targetSequence[targetIndex];
+
+    // Drop the reading for the tone we are about to redo — one entry, matched on
+    // ear *and* frequency so an inter-octave repeat cannot remove the wrong one.
+    setResults((prev) => {
+      const at = prev.findIndex((r) => r.ear === targetEar && r.freq === targetFreq);
+      if (at === -1) return prev;
+      return [...prev.slice(0, at), ...prev.slice(at + 1)];
+    });
+
+    setAudiogram((prev) => {
+      const side = { ...(prev[targetEar] ?? {}) };
+      delete side[String(targetFreq)];
+      return { ...prev, [targetEar]: side };
+    });
+
+    // 1 kHz is measured twice on purpose — once in sequence and once as the
+    // retest. Unwind whichever half is being redone, newest first.
+    if (targetFreq === 1000) {
+      setRetest((prev) => (prev.second !== null ? { ...prev, second: null } : { ...prev, first: null }));
+    }
+
+    setEar(targetEar);
+    setStepIndex(targetIndex);
+    setResponded(false);
+    respondedRef.current = false;
+    setIsCatchTrial(false);
+    // The tracker is rebuilt by the effect that watches `ear` and `freq`, which
+    // also returns the phase to `idle` — so the tone starts from the top rather
+    // than resuming a run that belonged to the reading just discarded.
+  }
+
   function complete() {
     const agreement =
       retest.first !== null && retest.second !== null ? Math.abs(retest.first - retest.second) : null;
@@ -269,6 +329,25 @@ export default function Audiometry({
       interOctaveTested: extraFreqs,
     });
   }
+
+  /**
+   * How many thresholds were actually obtained.
+   *
+   * This is the number the whole downstream pipeline depends on and, until now,
+   * nothing checked it. A tone that is skipped — or one where the tracker never
+   * converged — yields `thresholdDbHl === null`, and `finishFrequency` only
+   * writes to the audiogram when that is non-null. Skip enough of them and
+   * `complete()` posts `{left:{}, right:{}}`, which the API accepts without
+   * complaint. The result is an assessment that looks finished and produces "No
+   * audiometric data" in both reports and no 3D cochlea, with nothing anywhere
+   * having reported a problem.
+   *
+   * So the count is surfaced, and saving an audiogram with nothing in it is
+   * refused rather than silently accepted.
+   */
+  const measuredCount =
+    Object.keys(audiogram.left ?? {}).length + Object.keys(audiogram.right ?? {}).length;
+  const skippedCount = Math.max(0, results.length - measuredCount);
 
   const totalSteps = CORE_SEQUENCE.length * 2 + extraFreqs.left.length + extraFreqs.right.length;
   const doneSteps = (ear === "left" ? CORE_SEQUENCE.length + extraFreqs.right.length : 0) + stepIndex;
@@ -363,6 +442,15 @@ export default function Audiometry({
                   <Trans i18nKey="audiometry.orPressSpace" components={[<Kbd key="0" />]} />
                 </p>
                 <div className="row" style={{ justifyContent: "center" }}>
+                  <button
+                    type="button"
+                    className="btn btn--sm btn--ghost"
+                    onClick={previousFrequency}
+                    disabled={!canGoBack}
+                    title={t("audiometry.previousHint")}
+                  >
+                    ← {t("audiometry.previous")}
+                  </button>
                   <button type="button" className="btn btn--sm btn--ghost" onClick={stop}>
                     {t("audiometry.pause")}
                   </button>
@@ -375,12 +463,48 @@ export default function Audiometry({
 
             {phase === "done" && (
               <div className="stack stack-3">
-                <Chip tone="ok" dot>
+                <Chip tone={measuredCount > 0 ? "ok" : "crit"} dot>
                   {t("audiometry.bothComplete")}
                 </Chip>
-                <button type="button" className="btn btn--primary btn--lg" onClick={complete}>
-                  {t("audiometry.saveAndContinue")}
-                </button>
+
+                {/* What was actually captured, in the one place where it can
+                    still be put right. */}
+                <p className="meta">
+                  {t("audiometry.measuredSummary", {
+                    measured: measuredCount,
+                    total: totalSteps,
+                  })}
+                  {skippedCount > 0 && ` ${t("audiometry.skippedSummary", { count: skippedCount })}`}
+                </p>
+
+                {measuredCount === 0 ? (
+                  // Nothing was measured. Saving this would produce a finished-
+                  // looking assessment with no audiogram, no graph and no 3D
+                  // model, and no explanation anywhere of why.
+                  <Panel tone="crit" tight>
+                    <div className="stack stack-2">
+                      <span className="label">{t("audiometry.noThresholdsTitle")}</span>
+                      <p className="meta">{t("audiometry.noThresholdsBody")}</p>
+                      <button
+                        type="button"
+                        className="btn btn--primary"
+                        onClick={() => {
+                          setEar("right");
+                          setStepIndex(0);
+                          setResults([]);
+                          setRetest({ first: null, second: null });
+                          setPhase("idle");
+                        }}
+                      >
+                        {t("audiometry.restart")}
+                      </button>
+                    </div>
+                  </Panel>
+                ) : (
+                  <button type="button" className="btn btn--primary btn--lg" onClick={complete}>
+                    {t("audiometry.saveAndContinue")}
+                  </button>
+                )}
               </div>
             )}
           </div>

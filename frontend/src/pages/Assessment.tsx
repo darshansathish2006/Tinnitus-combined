@@ -52,7 +52,7 @@ import {
   useAsync,
 } from "../components/ui";
 import { Audiogram, Fingerprint, RadialGauge } from "../components/charts";
-import { IconChevronRight, IconFile } from "../components/icons";
+import { IconCheck, IconChevronRight, IconFile } from "../components/icons";
 import { ClinicalSummary } from "./Results";
 import Calibration, { type CalibrationResult } from "./assessment/Calibration";
 import Audiometry, { type AudiometryResult } from "./assessment/Audiometry";
@@ -129,7 +129,31 @@ export default function Assessment() {
   const instruments = useAsync(() => api.assessments.instruments(), []);
 
   // Intake
-  const [character, setCharacter] = useState<string>(CHARACTER_OPTIONS[0]);
+  /**
+   * What the tinnitus sounds like — now a set rather than one answer.
+   *
+   * Plenty of people hear two things at once: a hiss with a tone riding on it is
+   * the textbook presentation, and forcing that into a single button meant
+   * either losing half the description or falling back on "Multiple sounds",
+   * which records that there were several without recording what they were.
+   *
+   * Order is meaningful and preserved: the first selection is the primary
+   * character, and it is what the server keeps in `tinnitus_character` for every
+   * existing reader — the report narrative, the analysis payload, the model's
+   * feature vector. Nothing downstream had to change to accept a list.
+   */
+  const [characters, setCharacters] = useState<string[]>([CHARACTER_OPTIONS[0]]);
+
+  function toggleCharacter(value: string) {
+    setCharacters((prev) => {
+      if (prev.includes(value)) {
+        // Never allow the set to empty — the question is required, and an empty
+        // answer would silently clear the primary character on save.
+        return prev.length === 1 ? prev : prev.filter((c) => c !== value);
+      }
+      return [...prev, value];
+    });
+  }
   const [laterality, setLaterality] = useState<"left" | "right" | "both" | "central">("both");
   const [onsetMonths, setOnsetMonths] = useState(12);
   const [pulsatile, setPulsatile] = useState(false);
@@ -144,7 +168,11 @@ export default function Assessment() {
   useEffect(() => {
     const p = profile.data;
     if (!p) return;
-    if (p.tinnitus_character) setCharacter(p.tinnitus_character);
+    // Prefer the stored set; fall back to the single character for a record
+    // written before the field existed, so an older patient's answer still
+    // loads rather than resetting to the first option.
+    if (p.tinnitus_characters?.length) setCharacters(p.tinnitus_characters);
+    else if (p.tinnitus_character) setCharacters([p.tinnitus_character]);
     if (p.laterality) setLaterality(p.laterality as typeof laterality);
     if (p.duration_months) setOnsetMonths(Math.round(p.duration_months));
     setPulsatile(p.pulsatile);
@@ -183,7 +211,10 @@ export default function Assessment() {
       const onsetDate = new Date();
       onsetDate.setMonth(onsetDate.getMonth() - onsetMonths);
       await api.patients.updateMe({
-        tinnitus_character: character,
+        // Both are sent, but the server derives the primary from the list so the
+        // two cannot disagree — see `PatientProfileUpdateSerializer.update`.
+        tinnitus_character: characters[0] ?? "",
+        tinnitus_characters: characters,
         laterality,
         onset_date: onsetDate.toISOString().slice(0, 10),
         pulsatile,
@@ -244,7 +275,24 @@ export default function Assessment() {
   async function submitAudiometry(result: AudiometryResult) {
     setSaving(true);
     try {
-      await saveModule({ audiogram: result.audiogram }, ["audiometry"]);
+      // The reliability verdict travels with the thresholds it qualifies.
+      // Previously only `audiogram` was sent and `reliable` was raised as a
+      // toast — so the one signal saying "do not trust these numbers" lived for
+      // four seconds on the patient's screen and never reached the record, the
+      // reports or the clinician. A threshold obtained from someone pressing the
+      // button in silence is not a threshold, and a report that shows it without
+      // that caveat is worse than one with a gap in it.
+      await saveModule(
+        {
+          audiogram: result.audiogram,
+          audiometry_reliable: result.reliable,
+          audiometry_notes: result.notes,
+          audiometry_false_positives: result.falsePositives,
+          audiometry_catch_trials: result.catchTrials,
+          audiometry_retest_agreement_db: result.retestAgreementDb,
+        },
+        ["audiometry"]
+      );
       if (!result.reliable) toast(t("assessment.toast.audiometryFlagged"), "crit");
       // Audiometry is the last part of the hearing step's *calibration* half;
       // the three measurement modules follow before the step is done.
@@ -491,15 +539,42 @@ export default function Assessment() {
                 {/* The stored value stays the English token — it feeds the
                     clinical record and the model's feature vector — while the
                     label the patient reads is translated. */}
-                <OptionGroup<string>
-                  options={CHARACTER_OPTIONS.map((c) => ({
-                    value: c,
-                    label: t(`assessment.character.${c}`, { defaultValue: c }),
-                  }))}
-                  value={character}
-                  onChange={setCharacter}
-                  columns={3}
-                />
+                <span className="meta">{t("assessment.intake.characterMulti")}</span>
+                {/* Deliberately not `OptionGroup`, which is a single-choice
+                    control: `aria-pressed` on a radio-like group would announce
+                    the wrong semantics for a multi-select. These are toggle
+                    buttons with the same `.option` styling, so the panel looks
+                    exactly as it did while behaving as a set. */}
+                <div
+                  className="grid"
+                  style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "var(--s2)" }}
+                  role="group"
+                  aria-label={t("assessment.intake.character")}
+                >
+                  {CHARACTER_OPTIONS.map((c) => {
+                    const selected = characters.includes(c);
+                    const primary = characters[0] === c;
+                    return (
+                      <button
+                        key={c}
+                        type="button"
+                        className="option"
+                        aria-pressed={selected}
+                        onClick={() => toggleCharacter(c)}
+                      >
+                        <span className="row row--tight row--nowrap" style={{ minWidth: 0 }}>
+                          {selected && <IconCheck size={13} />}
+                          <span style={{ minWidth: 0 }}>
+                            {t(`assessment.character.${c}`, { defaultValue: c })}
+                          </span>
+                          {primary && characters.length > 1 && (
+                            <Chip tone="signal">{t("assessment.intake.characterPrimary")}</Chip>
+                          )}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="stack stack-2">

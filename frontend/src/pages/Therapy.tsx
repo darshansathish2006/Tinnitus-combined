@@ -814,8 +814,8 @@ export default function Rehabilitation() {
             <Panel key={schedule} title={scheduleLabel(t, schedule)} bracketed>
               <div className="grid grid-auto" style={{ ["--min" as string]: "320px" }}>
                 {blocks.map((item) => (
-                  <Panel key={item.id} tone="sunken" tight>
-                    <div className="stack stack-3">
+                  <Panel key={item.id} tone="sunken" tight className="soundcard">
+                    <div className="stack stack-3 soundcard__body">
                       <div className="row row--between row--top">
                         <div className="stack stack-1" style={{ minWidth: 0 }}>
                           <strong style={{ fontSize: "var(--fs-small)" }}>{item.title}</strong>
@@ -859,8 +859,8 @@ export default function Rehabilitation() {
                 const localizedTitle = t(`rehab.relaxing.${item.id}.title`, { defaultValue: item.title });
                 const localizedGoal = t(`rehab.relaxing.${item.id}.goal`, { defaultValue: item.goal });
                 return (
-                  <Panel key={item.id} tone="sunken" tight>
-                    <div className="stack stack-3">
+                  <Panel key={item.id} tone="sunken" tight className="soundcard">
+                    <div className="stack stack-3 soundcard__body">
                       <div className="row row--between row--top">
                         <div className="stack stack-1" style={{ minWidth: 0 }}>
                           <strong style={{ fontSize: "var(--fs-small)" }}>{localizedTitle}</strong>

@@ -713,6 +713,8 @@ def apply_submission(assessment: Assessment, data: dict[str, Any]) -> None:
         "octave_confusion", "tinnitus_bandwidth", "pitch_match_ear",
         "pitch_match_trace", "ri_trace",
         "masking_thresholds", "masking_unmasked_hz",
+        "audiometry_reliable", "audiometry_notes", "audiometry_false_positives",
+        "audiometry_catch_trials", "audiometry_retest_agreement_db",
     ):
         if field in data:
             setattr(assessment, field, data[field])
@@ -3059,6 +3061,10 @@ def report_clinical(request):
             },
             "presenting_complaint": {
                 "character": patient.tinnitus_character,
+                # The full set, for the many patients who hear more than one
+                # sound. `character` above remains the primary one so every
+                # existing consumer of this report is unaffected.
+                "characters": list(patient.tinnitus_characters or ([patient.tinnitus_character] if patient.tinnitus_character else [])),
                 "laterality": patient.laterality or None,
                 "pulsatile": patient.pulsatile,
                 "somatic_modulation": patient.somatic_modulation,
@@ -3072,6 +3078,19 @@ def report_clinical(request):
             "audiometry": {
                 **result["audiogram"],
                 "raw": assessment.audiogram,
+                # The hearing test's flagged review. Carried on every report so
+                # the plain summary, the detailed report and the clinician's
+                # record all read the same verdict from one place, rather than
+                # three surfaces each deciding for themselves whether the
+                # measurement was sound.
+                "review": {
+                    "reliable": assessment.audiometry_reliable,
+                    "flagged": assessment.audiometry_reliable is False,
+                    "notes": list(assessment.audiometry_notes or []),
+                    "false_positives": assessment.audiometry_false_positives,
+                    "catch_trials": assessment.audiometry_catch_trials,
+                    "retest_agreement_db": assessment.audiometry_retest_agreement_db,
+                },
                 "device_profile": assessment.device_profile,
                 "plan": result.get("audiometry_plan"),
             },
@@ -3556,11 +3575,40 @@ def _generate_invite_code() -> str:
     return f"GT-{timezone.now().strftime('%M%S')}"
 
 
+# How many group therapy rooms one account may *host* at once.
+#
+# A cap on creation only. Joining is deliberately unlimited: a patient may sit in
+# as many other people's rooms as they like, and rationing that would work
+# against the point of peer support. What needs rationing is rooms nobody is
+# running — a host who has opened nine rooms is hosting none of them, and every
+# empty room dilutes the ones that are real. Closed and completed rooms do not
+# count, so the limit is "two live rooms", not "two rooms ever".
+MAX_HOSTED_GROUP_SESSIONS = 2
+
+
 @api_view(["POST"])
 def create_group_session(request):
     title = request.data.get("title", "").strip()
     if not title:
         return Response({"detail": "Session title is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    hosted_live = GroupTherapySession.objects.filter(
+        host=request.user, status=GroupTherapySession.Status.ACTIVE
+    ).count()
+    if hosted_live >= MAX_HOSTED_GROUP_SESSIONS:
+        return Response(
+            {
+                "detail": (
+                    f"You can host up to {MAX_HOSTED_GROUP_SESSIONS} group therapy sessions at a time. "
+                    f"Close one of your existing rooms before creating another. "
+                    f"You can still join as many other sessions as you like."
+                ),
+                "code": "hosted_session_limit",
+                "limit": MAX_HOSTED_GROUP_SESSIONS,
+                "hosted": hosted_live,
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
 
     description = request.data.get("description", "").strip()
     meet_url = request.data.get("meet_url", "").strip()

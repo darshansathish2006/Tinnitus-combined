@@ -10,19 +10,29 @@
 /**
  * Where the API lives.
  *
- * In development the Vite dev server and Django run on different ports, so the
- * base is Django's. In a production build the SPA is served by Django itself
- * from the same origin, so the base is wherever the page was loaded from — that
- * way the deployed URL is never baked into the bundle and the same build works
- * on a preview instance, a custom domain, or localhost.
+ * Always the origin this page was loaded from, in development and in
+ * production alike:
  *
- * `VITE_API_BASE` overrides both, for a deployment that hosts the frontend
- * separately from the API. An empty value counts as unset: `??` alone would
- * accept "" and every request would then be built from an invalid URL.
+ * * **In production** the SPA is served by Django itself, so same-origin is
+ *   simply correct, and the deployed URL is never baked into the bundle.
+ * * **In development** Vite proxies `/api` to Django (see `vite.config.ts`), so
+ *   same-origin reaches the backend without the browser ever making a
+ *   cross-origin request.
+ *
+ * This used to hardcode `http://127.0.0.1:8000` for development, which made the
+ * backend's port a value written down in three separate files. Moving Django to
+ * another port left the client calling the old one, and because a failed fetch
+ * renders as an absent panel rather than an error, the result was screens that
+ * were simply blank with nothing to explain them. The port now lives in exactly
+ * one place — `VITE_API_TARGET`, read by the proxy.
+ *
+ * `VITE_API_BASE` still overrides everything, for a deployment that genuinely
+ * hosts the frontend on a different origin from the API. An empty value counts
+ * as unset: `??` alone would accept "" and every request would then be built
+ * from an invalid URL.
  */
 const CONFIGURED_BASE = import.meta.env.VITE_API_BASE?.trim();
-const BASE =
-  CONFIGURED_BASE || (import.meta.env.DEV ? "http://127.0.0.1:8000" : window.location.origin);
+const BASE = CONFIGURED_BASE || window.location.origin;
 
 export class ApiError extends Error {
   constructor(
@@ -392,6 +402,8 @@ export interface PatientProfile {
   onset_date: string | null;
   duration_months: number | null;
   tinnitus_character: string | null;
+  /** Every sound the patient reports, primary first. */
+  tinnitus_characters: string[];
   laterality: string | null;
   pulsatile: boolean;
   somatic_modulation: boolean;
@@ -738,6 +750,23 @@ export interface ClinicianScheduleView {
 }
 
 /** Thresholds for one ear plus the matched pitch — enough to build the cochlea. */
+/**
+ * The hearing test's own reliability verdict for one assessment.
+ *
+ * Separate from `audiometry.flags`, which describe the *shape* of the hearing
+ * loss. This describes whether the measurement can be trusted at all.
+ * `reliable === null` means no audiometry was submitted, which is a different
+ * statement from `false`.
+ */
+export interface AudiometryReview {
+  reliable: boolean | null;
+  flagged: boolean;
+  notes: string[];
+  false_positives: number | null;
+  catch_trials: number | null;
+  retest_agreement_db: number | null;
+}
+
 export interface EarModelInputs {
   ear: string;
   thresholds: Record<string, number>;

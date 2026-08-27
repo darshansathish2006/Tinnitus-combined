@@ -59,6 +59,7 @@ def patient_dict(patient: Any) -> dict[str, Any]:
         "duration_months": patient.duration_months,
         "onset_date": patient.onset_date,
         "tinnitus_character": patient.tinnitus_character or None,
+        "tinnitus_characters": list(patient.tinnitus_characters or []),
         # Django stores choices as plain strings, so there is no `.value` to unwrap.
         "laterality": patient.laterality or None,
         "pulsatile": patient.pulsatile,

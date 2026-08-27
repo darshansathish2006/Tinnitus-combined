@@ -21,7 +21,7 @@
 import { Suspense, lazy, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Trans, useTranslation } from "react-i18next";
-import { api, ApiError } from "../api/client";
+import { api, ApiError, type AudiometryReview } from "../api/client";
 import { useSession } from "../state/session";
 import {
   Brand,
@@ -327,6 +327,7 @@ export default function Results() {
                   notchHz={data.audiometry.audiometric_notch_hz}
                   height={330}
                 />
+                <AudiometryReviewBlock review={data.audiometry.review} />
                 <div className="grid grid-4" style={{ marginTop: "var(--s4)" }}>
                   <Readout label={t("results.clinical.ptaRight")} value={fmt.db(data.audiometry.pta_right, 1)} unit="dB HL" size="sm" />
                   <Readout label={t("results.clinical.ptaLeft")} value={fmt.db(data.audiometry.pta_left, 1)} unit="dB HL" size="sm" />
@@ -995,6 +996,64 @@ function toneVar(tone: Tone): string {
   return `var(--${tone}-ink)`;
 }
 
+/**
+ * The hearing test's flagged review.
+ *
+ * Rendered from `report.audiometry.review`, which the server derives from the
+ * stored assessment — never from a prop a caller assembled, so the plain
+ * summary, the detailed report and the clinician's record cannot disagree about
+ * whether a measurement was sound.
+ *
+ * Silent when the audiometry was clean *and* when none was submitted: a reader
+ * who did no hearing test needs an empty audiogram explained, not a reliability
+ * verdict on a measurement that does not exist.
+ */
+function AudiometryReviewBlock({ review }: { review?: AudiometryReview | null }) {
+  const { t } = useTranslation();
+  if (!review || review.reliable === null) return null;
+
+  const notes = review.notes ?? [];
+  if (!review.flagged && notes.length === 0) return null;
+
+  return (
+    <Panel
+      tone={review.flagged ? "warn" : "sunken"}
+      tight
+      style={{ marginTop: "var(--s4)" }}
+      title={t("results.audiometryReview.title")}
+    >
+      <div className="stack stack-2">
+        <div className="row row--tight">
+          <Chip tone={review.flagged ? "warn" : "ok"} dot>
+            {t(review.flagged ? "results.audiometryReview.flagged" : "results.audiometryReview.clean")}
+          </Chip>
+          {review.catch_trials !== null && (
+            <Chip tone="ghost">
+              {t("results.audiometryReview.catchTrials", {
+                false: review.false_positives ?? 0,
+                total: review.catch_trials,
+              })}
+            </Chip>
+          )}
+          {review.retest_agreement_db !== null && (
+            <Chip tone="ghost">
+              {t("results.audiometryReview.retest", { db: review.retest_agreement_db })}
+            </Chip>
+          )}
+        </div>
+        {notes.length > 0 && (
+          <ul style={{ margin: 0, paddingLeft: "var(--s5)", fontSize: "var(--fs-tiny)", lineHeight: 1.6 }}>
+            {notes.map((note, i) => (
+              <li key={i}>{note}</li>
+            ))}
+          </ul>
+        )}
+        {review.flagged && <p className="meta">{t("results.audiometryReview.caveat")}</p>}
+      </div>
+    </Panel>
+  );
+}
+
 /** A verdict card: icon, heading, one-word conclusion, one plain sentence. */
 function StatusCard({
   icon: Icon,
@@ -1373,6 +1432,10 @@ export function ClinicalSummary({ report, detail }: { report: any; detail: any }
           <p className="meta" style={{ marginTop: "var(--s3)" }}>
             {t(earModel ? "results.plain.cochleaBody" : "results.plain.cochleaEmpty")}
           </p>
+          {/* Same block as the detailed report, same source. A patient reading
+              only the plain layer should not be the one person not told that
+              their hearing test was flagged. */}
+          <AudiometryReviewBlock review={report.audiometry?.review} />
           <p className="meta dim" style={{ fontSize: "var(--fs-micro)" }}>
             {t("results.plain.dragToRotate")}
           </p>

@@ -27,6 +27,30 @@ const FEATURES = [
   { icon: IconChat, key: "support" },
 ];
 
+/**
+ * Plausible bounds for a date of birth.
+ *
+ * Without a `min` the year field accepts anything up to the year 275760, which
+ * is not validation so much as an invitation. 120 years is past the verified
+ * human record and comfortably clear of any real patient.
+ */
+const DOB_MAX = new Date().toISOString().slice(0, 10);
+const DOB_MIN = new Date(new Date().getFullYear() - 120, 0, 1).toISOString().slice(0, 10);
+
+/** Whole years between `iso` and today, or null if the date is not usable. */
+function ageFromDob(iso: string): number | null {
+  if (!iso) return null;
+  const dob = new Date(iso);
+  if (Number.isNaN(dob.getTime())) return null;
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const before =
+    today.getMonth() < dob.getMonth() ||
+    (today.getMonth() === dob.getMonth() && today.getDate() < dob.getDate());
+  if (before) age -= 1;
+  return age >= 0 && age <= 120 ? age : null;
+}
+
 export default function Login() {
   const { t } = useTranslation();
   const login = useSession((s) => s.login);
@@ -40,6 +64,8 @@ export default function Login() {
   const [role, setRole] = useState<"patient" | "clinician">("patient");
   const [sex, setSex] = useState<"female" | "male" | "other" | "prefer_not_to_say" | "">("");
   const [dateOfBirth, setDateOfBirth] = useState("");
+  // Echoed back under the field so a mistyped year is obvious before submit.
+  const dobAge = ageFromDob(dateOfBirth);
   const [country, setCountry] = useState("");
   const [state, setState] = useState("");
   const [city, setCity] = useState("");
@@ -245,12 +271,46 @@ export default function Login() {
                       </select>
                     </Field>
 
-                    <Field label={t("auth.dateOfBirth")}>
+                    {/* A native `type="date"` already carries the browser's own
+                        calendar, and it is the right control: it is localised,
+                        keyboard accessible, and it hands back the exact
+                        `YYYY-MM-DD` string the API expects, so the stored format
+                        and the existing validation are untouched. What made it
+                        awkward for a *birth* date was the range — the year
+                        spinner ran to the year 275760 and the picker opened on
+                        today, so a sixty-year-old paged back sixty years.
+
+                        `min` bounds it to a plausible human lifespan, and
+                        clicking anywhere in the field opens the calendar rather
+                        than only the small icon at its right edge. `showPicker`
+                        is wrapped because Safari and Firefox either lack it or
+                        throw when it is called without a user gesture; the field
+                        stays fully usable by typing when it is unavailable. */}
+                    <Field
+                      label={t("auth.dateOfBirth")}
+                      hint={dobAge === null ? t("auth.dobHint") : t("auth.dobAge", { age: dobAge })}
+                    >
                       <input
                         type="date"
                         className="input"
                         value={dateOfBirth}
-                        max={new Date().toISOString().split("T")[0]}
+                        min={DOB_MIN}
+                        max={DOB_MAX}
+                        placeholder="YYYY-MM-DD"
+                        onFocus={(e) => {
+                          try {
+                            (e.currentTarget as HTMLInputElement & { showPicker?(): void }).showPicker?.();
+                          } catch {
+                            /* not supported here — typing still works */
+                          }
+                        }}
+                        onClick={(e) => {
+                          try {
+                            (e.currentTarget as HTMLInputElement & { showPicker?(): void }).showPicker?.();
+                          } catch {
+                            /* not supported here — typing still works */
+                          }
+                        }}
                         onChange={(e) => setDateOfBirth(e.target.value)}
                         required
                       />
@@ -349,7 +409,9 @@ export default function Login() {
                 </p>
 
                 <div className="stack stack-2">
-                  <span className="label">{t("auth.demo.clinician")}</span>
+                  <span className="label">
+                    {t("auth.demo.clinician")} ({clinicians.length})
+                  </span>
                   {clinicians.map((account) => (
                     <button
                       key={account.email}
@@ -367,28 +429,74 @@ export default function Login() {
                   ))}
 
                   <span className="label" style={{ marginTop: "var(--s2)" }}>
-                    {t("auth.demo.patients")}
+                    {t("auth.demo.patients")} ({patients.length})
                   </span>
-                  {patients.slice(0, 4).map((account) => (
-                    <button
-                      key={account.email}
-                      type="button"
-                      className="option"
-                      onClick={() => useDemo(account)}
-                    >
-                      <span style={{ minWidth: 0 }}>
-                        <span style={{ display: "block", fontWeight: 600 }}>{account.full_name}</span>
-                        <span className="meta mono" style={{ display: "block" }}>
-                          {account.mrn} · {account.email}
+                  {/* Every seeded patient, not the first four.
+
+                      The list is rendered straight from `/api/auth/demo-accounts`,
+                      which reads the seeded emails from `seed_demo`, so *which*
+                      accounts appear is decided by the seed and cannot drift
+                      from it — the cap was the only thing hiding eight of them.
+                      That mattered: the accounts worth demonstrating are not all
+                      near the front. James Whelan (catastrophic THI with masking
+                      rebound), Meera Iyer (pulsatile — an urgent red flag) and
+                      Wei Chen (bilateral hearing aids) were all below the cut,
+                      so the three cases that best show what the platform does
+                      were the three you could not click.
+
+                      Scrolls past roughly six entries rather than pushing the
+                      sign-in button off a laptop screen. */}
+                  <div
+                    className="stack stack-2"
+                    style={{ maxHeight: "268px", overflowY: "auto", paddingRight: "2px" }}
+                  >
+                    {patients.map((account) => (
+                      <button
+                        key={account.email}
+                        type="button"
+                        className="option"
+                        onClick={() => useDemo(account)}
+                      >
+                        <span style={{ minWidth: 0 }}>
+                          <span style={{ display: "block", fontWeight: 600 }}>{account.full_name}</span>
+                          <span className="meta mono" style={{ display: "block" }}>
+                            {account.mrn} · {account.email}
+                          </span>
                         </span>
-                      </span>
-                    </button>
-                  ))}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <p className="meta mono" style={{ marginTop: "var(--s3)" }}>
                   {t("auth.demo.password", { password: demo.data.accounts[0]?.password })}
                 </p>
+              </Panel>
+            )}
+
+            {/* A failed fetch used to render nothing at all: `demo.data` stays
+                null, both branches below test `demo.data`, and the panel simply
+                was not there. That is the worst possible failure mode for this
+                particular panel, because "the demo accounts are missing" and
+                "the API is unreachable" look identical — and the second is the
+                one that is actually true whenever the backend is on a port the
+                client is not calling. Now it says so, and names the base it
+                tried. */}
+            {/* `Boolean(...)`, not a bare `&&`: `demo.error` is typed
+                `unknown`, and `unknown && <JSX/>` has type `unknown` — which
+                React would be asked to render when the guard is falsy. */}
+            {Boolean(demo.error) && (
+              <Panel tone="crit" tight>
+                <div className="stack stack-2">
+                  <span className="label">{t("auth.demo.unreachableTitle")}</span>
+                  <p className="meta">{t("auth.demo.unreachableBody")}</p>
+                  <p className="meta mono" style={{ fontSize: "var(--fs-micro)" }}>
+                    {window.location.origin}/api
+                  </p>
+                  <button type="button" className="btn btn--sm" onClick={demo.reload}>
+                    {t("common.retry")}
+                  </button>
+                </div>
               </Panel>
             )}
 

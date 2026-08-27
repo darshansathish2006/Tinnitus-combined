@@ -122,6 +122,8 @@ export default function GroupTherapy() {
   const [loadingHub, setLoadingHub] = useState(true);
   const [activeSession, setActiveSession] = useState<GroupTherapySession | null>(null);
   const [joinCodeInput, setJoinCodeInput] = useState("");
+  /** Inline red message under the invite-code field; null when there is none. */
+  const [joinCodeError, setJoinCodeError] = useState<string | null>(null);
   const [joiningCode, setJoiningCode] = useState(false);
 
   // Join Request Workflow state
@@ -313,11 +315,26 @@ export default function GroupTherapy() {
     }
   }, []);
 
+  /**
+   * Keep the Rehab Progress tab in step with the Rehabilitation screen.
+   *
+   * Completion state has always come from the real record — `completed_today`
+   * on `/api/rehab/programme`, the same object the Rehabilitation screen reads
+   * and the same endpoint `Mark Done` writes to — so the green rows were never
+   * faked. What was missing was a reason to re-read it: the programme was
+   * fetched once when the room was entered, so a patient who ticked an activity
+   * on the Rehabilitation screen and came back to a room they already had open
+   * saw yesterday's answer.
+   *
+   * Re-fetching when the tab is opened is enough, and is cheaper than polling:
+   * the only way the number can have changed is that the patient went somewhere
+   * else and did the work, which means coming back to this tab to see it.
+   */
   useEffect(() => {
     if (activeSession) {
       loadRehabProgress();
     }
-  }, [activeSession?.id, loadRehabProgress]);
+  }, [activeSession?.id, activeTab, loadRehabProgress]);
 
   async function toggleRehabActivity(activity: RehabActivity) {
     if (rehabBusy.has(activity.key)) return;
@@ -681,23 +698,40 @@ export default function GroupTherapy() {
     }
   }
 
+  /**
+   * Join a room straight from its invite code.
+   *
+   * The code *is* the credential. Asking the host to approve somebody who
+   * already holds it added a wait for no security: anyone with the code could
+   * get in eventually, so the approval step only decided how long they stared
+   * at a pending spinner first. `joinSession` adds the user to the room and
+   * returns it, so the transition is immediate.
+   *
+   * A wrong code is reported inline in red rather than only as a toast — the
+   * error belongs next to the field that produced it, and a toast that has
+   * faded cannot be re-read. Host approval is untouched for every other way in;
+   * only the code path skips it.
+   */
   async function handleJoinByCode(e: React.FormEvent) {
     e.preventDefault();
-    if (!joinCodeInput.trim()) return;
+    const code = joinCodeInput.trim().toUpperCase();
+    if (!code) return;
     setJoiningCode(true);
+    setJoinCodeError(null);
     try {
-      const res = await api.groupTherapy.requestJoin(joinCodeInput.trim().toUpperCase());
-      if (res.status === "approved" && res.session) {
-        toast(`Entered room: ${res.session.title}`, "info");
-        setActiveSession(res.session);
-      } else if (res.status === "pending" && res.request_id) {
-        toast("Join request sent! Waiting for room host approval...", "info");
-        setPendingRequestId(res.request_id);
-      }
+      const session = await api.groupTherapy.joinSession(code);
+      setActiveSession(session);
       setJoinCodeInput("");
+      toast(`Joined room: ${session.title}`, "ok");
       loadHubSessions();
     } catch (err: any) {
-      toast(err.message || "Invalid invite code or session closed", "crit");
+      // Any refusal — unknown code, closed room, room full — leaves the patient
+      // exactly where they were, in no session. The message is the one the brief
+      // specifies for a bad code; a full or closed room keeps the server's own
+      // wording, which is more useful than pretending the code was wrong.
+      const detail = typeof err?.message === "string" ? err.message : "";
+      const wrongCode = !detail || /not found|invite code/i.test(detail);
+      setJoinCodeError(wrongCode ? "Entered Code is Wrong, Try Again." : detail);
     } finally {
       setJoiningCode(false);
     }
@@ -974,7 +1008,10 @@ export default function GroupTherapy() {
                 type="text"
                 placeholder="Enter 6-character code (e.g. GT-89X2)"
                 value={joinCodeInput}
-                onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
+                onChange={(e) => {
+                  setJoinCodeInput(e.target.value.toUpperCase());
+                  if (joinCodeError) setJoinCodeError(null);
+                }}
                 className="input"
                 style={{
                   maxWidth: "320px",
@@ -987,9 +1024,23 @@ export default function GroupTherapy() {
                 }}
               />
               <button type="submit" className="btn btn--primary" disabled={joiningCode || !joinCodeInput.trim()}>
-                {joiningCode ? "Sending Request..." : "Request to Join Group Session"}
+                {joiningCode ? "Joining..." : "Join the Group Session"}
               </button>
             </form>
+            {joinCodeError && (
+              <p
+                role="alert"
+                className="meta"
+                style={{
+                  marginTop: "var(--s2)",
+                  color: "#fca5a5",
+                  fontWeight: 700,
+                  fontSize: "var(--fs-tiny)",
+                }}
+              >
+                {joinCodeError}
+              </p>
+            )}
           </div>
 
           {/* Active Sessions List */}

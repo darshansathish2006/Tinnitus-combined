@@ -125,7 +125,15 @@ class Patient(models.Model):
     phone = models.CharField(max_length=32, blank=True, default="")
 
     onset_date = models.DateField(null=True, blank=True)
+    # The single character is kept as the *primary* one and every existing
+    # reader — the analysis layer, the report narrative, the ML feature vector,
+    # the seeded cohort — goes on using it unchanged. `tinnitus_characters`
+    # carries the full set for the many patients who hear more than one sound at
+    # once, which the single field could only express as the blunt "Multiple
+    # sounds". Two fields rather than a widened one, so nothing that reads the
+    # old field has to learn a new shape.
     tinnitus_character = models.CharField(max_length=48, blank=True, default="")
+    tinnitus_characters = models.JSONField(default=list, blank=True)
     laterality = models.CharField(max_length=16, choices=Ear.choices, blank=True, default="")
     pulsatile = models.BooleanField(default=False)
     somatic_modulation = models.BooleanField(default=False)
@@ -190,6 +198,24 @@ class Assessment(models.Model):
     pta_right = models.FloatField(null=True, blank=True)
     hf_pta_left = models.FloatField(null=True, blank=True)
     hf_pta_right = models.FloatField(null=True, blank=True)
+
+    # -- audiometry reliability (the hearing test's own flagged review) ------ #
+    # Distinct from `analyse_audiogram`'s `flags`, which describe the *shape* of
+    # the hearing loss (asymmetry, noise notch). These describe whether the
+    # measurement can be trusted at all: responses in silence, a retest that did
+    # not reproduce, a frequency that never converged.
+    #
+    # A threshold obtained from a patient who pressed the button in silence is
+    # not a threshold, and a report that presents it as one without saying so is
+    # worse than a report with a gap. The client already computed all of this and
+    # showed it on screen; it simply had nowhere to be stored, so it died with
+    # the page. `None` on `audiometry_reliable` means "no audiometry submitted",
+    # which is a different statement from `False`.
+    audiometry_reliable = models.BooleanField(null=True, blank=True)
+    audiometry_notes = models.JSONField(default=list, blank=True)
+    audiometry_false_positives = models.IntegerField(null=True, blank=True)
+    audiometry_catch_trials = models.IntegerField(null=True, blank=True)
+    audiometry_retest_agreement_db = models.FloatField(null=True, blank=True)
     hearing_grade = models.CharField(max_length=32, blank=True, default="")
     audiometric_notch_hz = models.FloatField(null=True, blank=True)
 

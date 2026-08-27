@@ -342,6 +342,37 @@ export default function PatientRecord() {
                 notchHz={analysis.data.assessment.audiometric_notch_hz}
                 height={310}
               />
+              {/* The hearing test's own flagged review, read straight off the
+                  stored assessment. A clinician looking at thresholds is the
+                  reader who most needs to know the patient answered three of
+                  eight silent checks — without it these look like clean data. */}
+              {(analysis.data.assessment as any).audiometry_reliable === false && (
+                <Panel tone="warn" tight style={{ marginTop: "var(--s3)" }}>
+                  <div className="stack stack-2">
+                    <div className="row row--tight">
+                      <Chip tone="warn" dot>{t("record.audiometryFlagged")}</Chip>
+                      {(analysis.data.assessment as any).audiometry_catch_trials !== null && (
+                        <Chip tone="ghost">
+                          {(analysis.data.assessment as any).audiometry_false_positives ?? 0}/
+                          {(analysis.data.assessment as any).audiometry_catch_trials} false positive
+                        </Chip>
+                      )}
+                      {(analysis.data.assessment as any).audiometry_retest_agreement_db !== null && (
+                        <Chip tone="ghost">
+                          retest {(analysis.data.assessment as any).audiometry_retest_agreement_db} dB
+                        </Chip>
+                      )}
+                    </div>
+                    <ul style={{ margin: 0, paddingLeft: "var(--s5)", fontSize: "var(--fs-tiny)", lineHeight: 1.6 }}>
+                      {((analysis.data.assessment as any).audiometry_notes ?? []).map(
+                        (note: string, i: number) => (
+                          <li key={i}>{note}</li>
+                        )
+                      )}
+                    </ul>
+                  </div>
+                </Panel>
+              )}
               <div className="grid grid-4" style={{ marginTop: "var(--s4)" }}>
                 <Readout label={t("record.pitch")} value={fmt.hz(analysis.data.assessment.pitch_match_hz)} unit="Hz" size="sm" tone="signal" />
                 <Readout label={t("record.loudness")} value={fmt.db(analysis.data.assessment.loudness_match_db_sl, 1)} unit="dB SL" size="sm" />

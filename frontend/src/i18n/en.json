@@ -131,6 +131,8 @@
     "dark": "dark"
   },
   "auth": {
+    "dobHint": "Use the calendar, or type it as YYYY-MM-DD.",
+    "dobAge": "You are {{age}} years old.",
     "signIn": "Sign in",
     "createAccount": "Create account",
     "headline": "Take control of your tinnitus.",
@@ -164,6 +166,8 @@
       "supportDetail": "In your own language"
     },
     "demo": {
+      "unreachableTitle": "Cannot reach the API",
+      "unreachableBody": "The demonstration accounts could not be loaded because the backend did not respond. Check that Django is running and that the dev proxy points at its port (VITE_API_TARGET in frontend/.env.local).",
       "title": "Demonstration accounts",
       "loading": "Loading demo accounts",
       "intro": "Seeded records with full longitudinal history. Click to fill the form.",
@@ -367,6 +371,8 @@
       "note": "You will need headphones and a reasonably quiet room. There is an optional 5-minute pitch-matching test at the end — we will explain it and you can decide then."
     },
     "intake": {
+      "characterMulti": "Select every sound you hear — the first one you pick is treated as the main one.",
+      "characterPrimary": "Main",
       "title": "Tell us about your tinnitus",
       "character": "What does it sound like?",
       "laterality": "Where do you hear it?",
@@ -1120,6 +1126,13 @@
     "personalisedLater": "This is a working level, good enough to measure against. At the end of the hearing measurement we set your real reference level — using your own tinnitus pitch and the measurements you are about to give, rather than a standard tone."
   },
   "audiometry": {
+    "measuredSummary": "{{measured}} of {{total}} frequencies measured.",
+    "skippedSummary": "{{count}} skipped or not converged — these are left blank on your audiogram rather than guessed.",
+    "noThresholdsTitle": "No thresholds were measured",
+    "noThresholdsBody": "Every tone was skipped, so there is no hearing data to save. Your audiogram, your report and the 3D model of your cochlea are all built from these thresholds, so the test needs to be run again before it can be saved.",
+    "restart": "Run the hearing test again",
+    "previous": "Previous",
+    "previousHint": "Go back one frequency and measure it again",
     "leftEar": "left ear",
     "rightEar": "right ear",
     "retestChip": "1 kHz recheck",
@@ -1308,6 +1321,14 @@
     "curveAppears": "The curve appears as you record ratings."
   },
   "results": {
+    "audiometryReview": {
+          "title": "Hearing test review",
+          "flagged": "Flagged for review",
+          "clean": "Measurement clean",
+          "catchTrials": "{{false}} of {{total}} silent checks answered",
+          "retest": "Retest agreed within {{db}} dB",
+          "caveat": "These thresholds should be confirmed by a clinician before treatment decisions are based on them."
+    },
     "loading": "Loading your assessments",
     "assembling": "Assembling report",
     "emptyTitle": "No completed assessment yet",
@@ -1591,6 +1612,7 @@
     }
   },
   "record": {
+    "audiometryFlagged": "Hearing test flagged for review",
     "loading": "Loading patient record",
     "backToCaseload": "← Caseload",
     "label": "Patient record",

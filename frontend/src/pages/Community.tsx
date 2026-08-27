@@ -1087,36 +1087,41 @@ export default function Community() {
 
       {/* WhatsApp-Style Read Status Info Modal */}
       {activeReadModalMsg && (
+        /* A popover anchored bottom-right rather than a centred modal behind a
+           full-screen scrim. Message info is a glance — "who has seen this?" —
+           and dimming the entire page to answer it hid the conversation the
+           question was about. The backdrop is kept but made transparent so a
+           click anywhere still dismisses it, which is the one thing the scrim
+           was genuinely doing. */
         <div
           style={{
             position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: "rgba(0, 0, 0, 0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
+            inset: 0,
+            background: "transparent",
             zIndex: 1000,
-            padding: "20px",
           }}
           onClick={() => setActiveReadModalMsg(null)}
         >
           <div
+            role="dialog"
+            aria-label="Message info"
             style={{
+              position: "fixed",
+              right: "24px",
+              bottom: "24px",
               background: "var(--surface)",
               border: "1px solid var(--ink-line)",
-              borderRadius: "16px",
-              padding: "24px",
-              maxWidth: "440px",
-              width: "100%",
-              boxShadow: "0 20px 40px rgba(0, 0, 0, 0.2)",
+              borderRadius: "14px",
+              padding: "14px",
+              width: "min(300px, calc(100vw - 32px))",
+              maxHeight: "min(360px, calc(100vh - 48px))",
+              overflowY: "auto",
+              boxShadow: "0 12px 28px rgba(0, 0, 0, 0.18)",
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-              <h3 style={{ fontSize: "1.1rem", fontWeight: 700, margin: 0, color: "var(--ink)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
+              <h3 style={{ fontSize: "0.9rem", fontWeight: 700, margin: 0, color: "var(--ink)" }}>
                 Message Info
               </h3>
               <button
@@ -1128,7 +1133,20 @@ export default function Community() {
               </button>
             </div>
 
-            <div style={{ fontSize: "13.5px", color: "var(--ink)", marginBottom: "20px", background: "var(--surface-sunken)", padding: "12px", borderRadius: "10px", borderLeft: "3px solid var(--signal)" }}>
+            <div
+              style={{
+                fontSize: "12px",
+                lineHeight: 1.45,
+                color: "var(--ink)",
+                marginBottom: "12px",
+                background: "var(--surface-sunken)",
+                padding: "8px 10px",
+                borderRadius: "8px",
+                borderLeft: "3px solid var(--signal)",
+                maxHeight: "56px",
+                overflow: "hidden",
+              }}
+            >
               "{activeReadModalMsg.content}"
             </div>
 

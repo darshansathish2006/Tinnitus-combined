@@ -1970,6 +1970,26 @@ code, kbd, .mono {
 .toast--ok { border-left-color: var(--ok); }
 
 /* ==========================================================================
+   Rehabilitation — the relaxing-sound cards
+   --------------------------------------------------------------------------
+   Twenty cards in an auto-fit grid, each with a title, a one-to-three-line
+   description and a Start button. The grid stretches every card to the tallest
+   in its row, but `.stack` spaces children with `margin-top` rather than laying
+   them out in a flex column — so the button sat directly under its own text and
+   landed at a different height in every card. A ragged row of primary actions
+   reads as broken alignment, which is why the doctor cards already solve this
+   the same way a few hundred lines above.
+
+   The card becomes a flex column that fills its grid cell, and the action takes
+   `margin-top: auto` so it is pinned to the bottom whatever the text above it
+   does. Nothing about the visual design changes — same panel, same colour, same
+   size — only where the button comes to rest.
+   ========================================================================== */
+.soundcard { height: 100%; display: flex; flex-direction: column; }
+.soundcard__body { display: flex; flex-direction: column; flex: 1 1 auto; }
+.soundcard__body > .btn { margin-top: auto; }
+
+/* ==========================================================================
    Group therapy — dark activity panels
    --------------------------------------------------------------------------
    The group-therapy room paints its activity panels with hardcoded dark fills

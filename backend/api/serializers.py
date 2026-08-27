@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 from django.contrib.auth.password_validation import validate_password
+from django.db import models
 from rest_framework import serializers
 
 from .models import (
@@ -94,7 +95,7 @@ class PatientSerializer(serializers.ModelSerializer):
         model = Patient
         fields = [
             "id", "mrn", "full_name", "email", "date_of_birth", "age", "sex", "phone",
-            "onset_date", "duration_months", "tinnitus_character", "laterality",
+            "onset_date", "duration_months", "tinnitus_character", "tinnitus_characters", "laterality",
             "pulsatile", "somatic_modulation", "hyperacusis", "hearing_aid_use",
             "noise_exposure_years", "comorbidities", "medications", "etiology_notes",
             "consent_research", "clinician_id", "clinician_name", "has_saved_calibration",
@@ -111,11 +112,47 @@ class PatientSerializer(serializers.ModelSerializer):
 
 class PatientProfileUpdateSerializer(serializers.ModelSerializer):
     laterality = serializers.ChoiceField(choices=Ear.choices, required=False, allow_blank=True)
+    tinnitus_characters = serializers.ListField(
+        # `allow_blank` so a stray empty entry is *cleaned* rather than rejecting
+        # the whole submission — the validator below drops it. A form that
+        # refuses the entire answer because one hidden entry was whitespace is
+        # not validation, it is a dead end the patient cannot diagnose.
+        child=serializers.CharField(max_length=48, allow_blank=True),
+        required=False,
+        allow_empty=True,
+    )
+
+    def validate_tinnitus_characters(self, value: list[str]) -> list[str]:
+        """De-duplicate, trim, and cap. Order is the patient's own.
+
+        Kept order-significant because the first entry becomes the primary
+        character, and the patient tapping "Ringing" first is a statement about
+        which sound dominates.
+        """
+        seen: list[str] = []
+        for raw in value:
+            item = (raw or "").strip()
+            if item and item not in seen:
+                seen.append(item)
+        return seen[:10]
+
+    def update(self, instance, validated_data):
+        """Keep the primary character in step with the set.
+
+        Everything downstream — the report narrative, the analysis payload, the
+        feature vector — reads `tinnitus_character`. Deriving it here rather than
+        asking the client to send both consistently means the two cannot drift:
+        there is one place that decides what "primary" means.
+        """
+        characters = validated_data.get("tinnitus_characters")
+        if characters is not None:
+            validated_data["tinnitus_character"] = characters[0] if characters else ""
+        return super().update(instance, validated_data)
 
     class Meta:
         model = Patient
         fields = [
-            "date_of_birth", "sex", "phone", "onset_date", "tinnitus_character", "laterality",
+            "date_of_birth", "sex", "phone", "onset_date", "tinnitus_character", "tinnitus_characters", "laterality",
             "pulsatile", "somatic_modulation", "hyperacusis", "hearing_aid_use",
             "noise_exposure_years", "comorbidities", "medications", "etiology_notes",
             "consent_research",
@@ -155,6 +192,15 @@ class AssessmentSubmitSerializer(serializers.Serializer):
     save_calibration = serializers.BooleanField(required=False, default=False)
 
     audiogram = serializers.DictField(required=False)
+
+    # The hearing test's own reliability verdict, submitted alongside the
+    # thresholds it qualifies. Bounded rather than free-form so a client cannot
+    # post a retest disagreement of 900 dB.
+    audiometry_reliable = serializers.BooleanField(required=False, allow_null=True)
+    audiometry_notes = serializers.ListField(child=serializers.CharField(), required=False)
+    audiometry_false_positives = serializers.IntegerField(required=False, allow_null=True, min_value=0, max_value=200)
+    audiometry_catch_trials = serializers.IntegerField(required=False, allow_null=True, min_value=0, max_value=200)
+    audiometry_retest_agreement_db = serializers.FloatField(required=False, allow_null=True, min_value=0, max_value=130)
 
     pitch_match_hz = serializers.FloatField(required=False, allow_null=True, min_value=50, max_value=20000)
     pitch_match_ear = serializers.ChoiceField(choices=Ear.choices, required=False, allow_blank=True)
@@ -521,8 +567,32 @@ class CommunityChatMessageSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         current_user = request.user if request and getattr(request, "user", None) and request.user.is_authenticated else None
         
-        all_members = list(obj.community.members.filter(is_active=True).order_by("id"))
+        all_members = list(
+            # `is_active` alone was the wrong test, and it is what produced the
+            # wall of names nobody recognised. A community is assigned from a
+            # user's city, so every account registered in that city belongs to
+            # it whether or not they ever opened the chat — "Not read yet" was
+            # listing the city's whole population. `joined_community` is the
+            # opt-in the Community screen asks for before it shows anyone the
+            # feed or the chatbox, so filtering on it makes this list what it
+            # claims to be: the people actually present in the conversation.
+            obj.community.members.filter(is_active=True, joined_community=True)
+            .filter(
+                # Present in the conversation, not merely enrolled in the city.
+                # Joining the community is the opt-in that grants access to the
+                # chat; having sent or read a message is evidence of actually
+                # being in it. Without this second test the list was every
+                # account registered in the city, most of whom had never opened
+                # the room — which is what made "Not read yet" read as a page of
+                # invented names.
+                models.Q(community_chat_messages__community=obj.community)
+                | models.Q(read_community_chat_messages__community=obj.community)
+            )
+            .distinct()
+            .order_by("id")
+        )
         read_ids = set(obj.read_by.values_list("id", flat=True))
+        read_ids.add(obj.sender_id)
         
         out = []
         for m in all_members:
@@ -537,8 +607,32 @@ class CommunityChatMessageSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         current_user = request.user if request and getattr(request, "user", None) and request.user.is_authenticated else None
 
-        all_members = list(obj.community.members.filter(is_active=True).order_by("id"))
+        all_members = list(
+            # `is_active` alone was the wrong test, and it is what produced the
+            # wall of names nobody recognised. A community is assigned from a
+            # user's city, so every account registered in that city belongs to
+            # it whether or not they ever opened the chat — "Not read yet" was
+            # listing the city's whole population. `joined_community` is the
+            # opt-in the Community screen asks for before it shows anyone the
+            # feed or the chatbox, so filtering on it makes this list what it
+            # claims to be: the people actually present in the conversation.
+            obj.community.members.filter(is_active=True, joined_community=True)
+            .filter(
+                # Present in the conversation, not merely enrolled in the city.
+                # Joining the community is the opt-in that grants access to the
+                # chat; having sent or read a message is evidence of actually
+                # being in it. Without this second test the list was every
+                # account registered in the city, most of whom had never opened
+                # the room — which is what made "Not read yet" read as a page of
+                # invented names.
+                models.Q(community_chat_messages__community=obj.community)
+                | models.Q(read_community_chat_messages__community=obj.community)
+            )
+            .distinct()
+            .order_by("id")
+        )
         read_ids = set(obj.read_by.values_list("id", flat=True))
+        read_ids.add(obj.sender_id)
 
         out = []
         for m in all_members:
