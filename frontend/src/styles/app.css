@@ -2179,8 +2179,10 @@ code, kbd, .mono {
    distance rather than as a card fading in. `transform-origin` sits near the
    top edge because that is the strip that would actually be holding it. */
 .gratitude-note {
+  position: relative;
   color: #0f172a;
-  padding: var(--s3);
+  /* Room at the top for the pin to sit in without the message running under it. */
+  padding: calc(var(--s3) + 8px) var(--s3) var(--s3);
   border-radius: var(--radius-sm);
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   display: flex;
@@ -2188,6 +2190,188 @@ code, kbd, .mono {
   justify-content: space-between;
   min-height: 90px;
 }
+/* Sync Breathing — the 4-7-8 guide circle.
+
+   Four seconds in, seven held, eight out: nineteen in total, and every keyframe
+   position below is that phase boundary as a percentage of it —
+   4/19 = 21.053%, 11/19 = 57.895%. Change the seconds in `BREATH_PATTERN` and
+   these have to move with them.
+
+   The whole circle is one animation rather than a transition driven by the
+   phase, which is what the exercise had before. A transition fires when the
+   phase flips and finishes on its own schedule, so the circle would rush to
+   full size in a second and then sit still for the other three — the opposite
+   of the slow continuous fill someone is meant to breathe along with. Here the
+   movement occupies the entire phase, and nothing re-renders to produce it. */
+/* This panel is dark whatever the page theme is, and `.meta` is coloured for
+   the light paper behind normal text — on here it comes out near-black on
+   near-black. Lift it to something readable. */
+.breath-panel .meta { color: rgba(226, 232, 240, 0.82); }
+/* The exercise is the only thing on this tab now, so the panel is held to a
+   readable column rather than stretched across the full activities area with
+   the circle marooned in the middle of it. */
+.breath-panel { max-width: 560px; margin: 0 auto; }
+
+.breath-stage {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  margin: var(--s4) auto;
+  display: grid;
+  place-items: center;
+}
+
+/* The dashed ring the marker travels around. */
+.breath-track {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px dashed rgba(148, 163, 184, 0.45);
+}
+.breath-tick {
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  width: 2px;
+  height: 12px;
+  margin-left: -1px;
+  background: rgba(226, 232, 240, 0.75);
+  /* Rotating about the circle's centre, which is 100px down from the tick. */
+  transform-origin: 1px 100px;
+}
+.breath-tick--inhale { transform: rotate(0deg); }
+.breath-tick--hold { transform: rotate(75.79deg); }   /* 4s of 19 */
+.breath-tick--exhale { transform: rotate(208.42deg); } /* 11s of 19 */
+
+/* A marker going round once per cycle, so position on the ring says how far
+   through the phase you are — the countdown in words, without reading. */
+.breath-orbit {
+  position: absolute;
+  inset: 0;
+  animation: breath-orbit 19s linear infinite;
+}
+.breath-pip {
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  border-radius: 50%;
+  background: #f8fafc;
+  box-shadow: 0 0 10px rgba(248, 250, 252, 0.9);
+}
+
+/* Soft rings that swell with the breath and fade back, giving the circle some
+   air around it rather than a hard edge. */
+.breath-halo {
+  position: absolute;
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  border: 1px solid rgba(148, 197, 253, 0.5);
+  animation: breath-halo 19s ease-in-out infinite;
+}
+.breath-halo--2 { animation-delay: 0.6s; opacity: 0.6; }
+
+.breath-orb {
+  position: relative;
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: #fff;
+  background-color: #3b82f6;
+  animation: breath-478 19s infinite;
+}
+/* The sheen is a layer of its own so the colour underneath can animate:
+   `background-color` interpolates between keyframes, a gradient does not. */
+.breath-orb::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 34%, rgba(255, 255, 255, 0.38) 0%, rgba(255, 255, 255, 0) 62%);
+}
+.breath-orb__phase {
+  position: relative;
+  /* Stated rather than inherited: the global `strong` rule paints text with
+     `--ink`, which on this orb is near-black on a saturated colour. */
+  color: #fff;
+  font-size: var(--fs-h4);
+  letter-spacing: 0.04em;
+}
+.breath-orb__count {
+  position: relative;
+  font-size: var(--fs-small);
+  color: rgba(255, 255, 255, 0.85);
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes breath-478 {
+  /* Inhale — fills over the full four seconds. */
+  0% {
+    transform: scale(0.52);
+    background-color: #3b82f6;
+    box-shadow: 0 0 26px rgba(59, 130, 246, 0.35);
+    animation-timing-function: cubic-bezier(0.37, 0, 0.63, 1);
+  }
+  /* Hold — steady at full, seven seconds. */
+  21.053% {
+    transform: scale(1);
+    background-color: #10b981;
+    box-shadow: 0 0 54px rgba(16, 185, 129, 0.5);
+  }
+  52% {
+    transform: scale(1);
+    background-color: #10b981;
+  }
+  /* Exhale — empties over eight, the longest phase and the calming one. */
+  57.895% {
+    transform: scale(1);
+    background-color: #8b5cf6;
+    box-shadow: 0 0 48px rgba(139, 92, 246, 0.45);
+    animation-timing-function: cubic-bezier(0.37, 0, 0.63, 1);
+  }
+  100% {
+    transform: scale(0.52);
+    background-color: #3b82f6;
+    box-shadow: 0 0 26px rgba(59, 130, 246, 0.35);
+  }
+}
+
+@keyframes breath-halo {
+  0% { transform: scale(0.55); opacity: 0.15; }
+  21.053% { transform: scale(1.24); opacity: 0.5; }
+  57.895% { transform: scale(1.3); opacity: 0.42; }
+  100% { transform: scale(0.55); opacity: 0.15; }
+}
+
+@keyframes breath-orbit {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Reduced motion: the exercise is still usable as a spoken instruction and a
+   countdown, so the circle holds still and takes the current phase's colour
+   instead of moving. */
+@media (prefers-reduced-motion: reduce) {
+  .breath-orb,
+  .breath-halo,
+  .breath-orbit {
+    animation: none;
+  }
+  .breath-orb { transform: scale(0.92); }
+  .breath-orb--inhale { background-color: #3b82f6; }
+  .breath-orb--hold { background-color: #10b981; }
+  .breath-orb--exhale { background-color: #8b5cf6; }
+  .breath-halo { opacity: 0.3; }
+}
+
 /* The paper-colour picker under the compose row. The swatch is the colour, so
    the selected one is marked with a ring drawn outside it rather than anything
    painted on top — a tick or a border would sit on the very sample the patient
@@ -2217,9 +2401,62 @@ code, kbd, .mono {
   .note-swatch:hover { transform: none; }
 }
 
+/* The pin holding the note to the wall.
+
+   Drawn rather than drawn-in: a round head with the light coming from the upper
+   left, a short needle behind it, and a shadow cast down the note. It straddles
+   the note's top edge, which is what makes the note read as hanging from it
+   rather than as a card with a dot on it. */
+.gratitude-note__pin {
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  transform: translate(-50%, 0);
+  width: 17px;
+  height: 17px;
+  z-index: 1;
+}
+/* Needle first, head second, and the order is the whole trick: two pseudo
+   elements paint in sequence, so the head lands over the top of the needle and
+   only its tip shows below. `z-index: -1` on the needle would not do this —
+   inside the pin's own stacking context a negative child still paints after the
+   background it is meant to hide behind. */
+.gratitude-note__pin::before {
+  content: "";
+  position: absolute;
+  top: 9px;
+  left: 50%;
+  width: 3px;
+  height: 10px;
+  margin-left: -1.5px;
+  border-radius: 0 0 1.5px 1.5px;
+  background: linear-gradient(#c2c8cf, #6b737c);
+}
+.gratitude-note__pin::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 30%, #ff9d92 0%, #e2483a 45%, #a01d16 100%);
+  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.34), inset 0 -1px 2px rgba(0, 0, 0, 0.28);
+}
+
 .gratitude-note--sticking {
   transform-origin: 50% 15%;
   animation: note-stick 620ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* A note arriving from someone else drops in rather than flying, so its pin
+   drives in on that shorter timing. The patient's own note is animated from
+   script instead, against the length of its journey. */
+.gratitude-note--sticking .gratitude-note__pin {
+  animation: pin-drive 620ms ease-out;
+}
+
+@keyframes pin-drive {
+  0%, 45% { transform: translate(-50%, -26px) scale(1.4); opacity: 0; }
+  72% { transform: translate(-50%, -10px) scale(1.18); opacity: 1; }
+  88% { transform: translate(-50%, 3px) scale(0.9); opacity: 1; }
+  100% { transform: translate(-50%, 0) scale(1); opacity: 1; }
 }
 
 @keyframes note-stick {
@@ -2249,6 +2486,9 @@ code, kbd, .mono {
    `onAnimationEnd` still fires, so the class is cleaned up either way. */
 @media (prefers-reduced-motion: reduce) {
   .gratitude-note--sticking { animation: fadein 260ms ease-out; }
+  /* The pin is part of the note's appearance, not an effect, so it stays put
+     and simply arrives with it. */
+  .gratitude-note--sticking .gratitude-note__pin { animation: none; }
 }
 
 /* Print.

@@ -79,6 +79,42 @@ const MOOD_TIERS = [
 type MoodTier = (typeof MOOD_TIERS)[number];
 
 /**
+ * The 4-7-8 relaxing breath: in for four, hold for seven, out for eight.
+ *
+ * The exercise used to run four-four-four, which is box breathing without the
+ * fourth side and not the technique the room is meant to teach. The long exhale
+ * is the point of 4-7-8 — it is what shifts the balance towards the calming
+ * branch of the nervous system.
+ *
+ * The seconds live here rather than in the stylesheet, and the CSS derives its
+ * keyframe positions from the same nineteen-second total, so the guide circle
+ * and the countdown cannot drift apart.
+ */
+const BREATH_PATTERN = [
+  { phase: "Inhale", seconds: 4 },
+  { phase: "Hold", seconds: 7 },
+  { phase: "Exhale", seconds: 8 },
+] as const;
+
+const BREATH_CYCLE_SECONDS = BREATH_PATTERN.reduce((total, step) => total + step.seconds, 0);
+
+type BreathPhase = (typeof BREATH_PATTERN)[number]["phase"];
+
+/** Where in the cycle a given elapsed time falls, and how long is left of it. */
+function breathAt(elapsedSeconds: number): { phase: BreathPhase; remaining: number } {
+  const t = ((elapsedSeconds % BREATH_CYCLE_SECONDS) + BREATH_CYCLE_SECONDS) % BREATH_CYCLE_SECONDS;
+  let start = 0;
+  for (const step of BREATH_PATTERN) {
+    if (t < start + step.seconds) {
+      return { phase: step.phase, remaining: Math.max(1, Math.ceil(start + step.seconds - t)) };
+    }
+    start += step.seconds;
+  }
+  const last = BREATH_PATTERN[BREATH_PATTERN.length - 1];
+  return { phase: last.phase, remaining: 1 };
+}
+
+/**
  * The paper colours a Gratitude Wall note can be posted on.
  *
  * These are the five the wall has always cycled through; picking one now just
@@ -156,10 +192,8 @@ export default function GroupTherapy() {
   >("breathing");
 
   // Breathing exercise local animation & audio synthesizer state
-  const [breathingPhase, setBreathingPhase] = useState<"Inhale" | "Hold" | "Exhale">("Inhale");
-  const [breathingSeconds, setBreathingSeconds] = useState(4);
-  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
-  const [soundType, setSoundType] = useState<"notch" | "pink" | "white">("notch");
+  const [breathingPhase, setBreathingPhase] = useState<BreathPhase>(BREATH_PATTERN[0].phase);
+  const [breathingSeconds, setBreathingSeconds] = useState<number>(BREATH_PATTERN[0].seconds);
 
   // Nature & Relaxing Sounds Sound Therapy State (Aakash's 20 sounds + Web Audio Engine)
   const [selectedSound, setSelectedSound] = useState<TherapyBlock>(RELAXING_SOUNDS[0]);
@@ -227,8 +261,6 @@ export default function GroupTherapy() {
   const flyingNoteRef = useRef<HTMLElement | null>(null);
 
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const noiseNodeRef = useRef<AudioNode | null>(null);
 
   const stopSoundPlayback = useCallback(() => {
     soundHandleRef.current?.stop(1.2);
@@ -497,6 +529,30 @@ export default function GroupTherapy() {
       { duration: 820, easing: "cubic-bezier(0.22, 1, 0.36, 1)" }
     );
 
+    /* The pin arrives separately and late. It stays out of sight while the note
+       is travelling, then comes down over the last fifth of the journey and
+       drives in just as the note touches the wall — pushing slightly past its
+       resting place before settling, the way a thumbtack does under a thumb.
+       Timing it against the same 820ms is what keeps the two events one action.
+
+       Every keyframe repeats `translate(-50%, …)` because that is what centres
+       the pin on the note's top edge; dropping it from any one of them would
+       jump the pin half its width sideways for that frame. */
+    const pin = clone.querySelector<HTMLElement>(".gratitude-note__pin");
+    if (pin && typeof pin.animate === "function") {
+      pin.animate(
+        [
+          { transform: "translate(-50%, -30px) scale(1.45)", opacity: 0, offset: 0 },
+          { transform: "translate(-50%, -30px) scale(1.45)", opacity: 0, offset: 0.6 },
+          { transform: "translate(-50%, -12px) scale(1.2)", opacity: 1, offset: 0.8 },
+          // Driven home, overshooting into the note before it comes back.
+          { transform: "translate(-50%, 3px) scale(0.9)", opacity: 1, offset: 0.9 },
+          { transform: "translate(-50%, 0) scale(1)", opacity: 1, offset: 1 },
+        ],
+        { duration: 820, easing: "ease-out" }
+      );
+    }
+
     // Hand the slot back whether the animation finished or was cancelled — a
     // note left invisible behind a removed copy would read as a lost post.
     const land = () => {
@@ -554,78 +610,40 @@ export default function GroupTherapy() {
     if (dropping.length > 0) setStickingNoteIds((prev) => [...prev, ...dropping]);
   }, [activityResponses, activeSession, flyNoteToWall]);
 
-  // Breathing timer cycle
+  /**
+   * Keep the phase label and countdown in step with the circle.
+   *
+   * The circle is animated entirely in CSS, so the motion costs no renders and
+   * stays smooth however busy the room gets. That leaves the label to follow it,
+   * and the two would drift if this counted seconds down on its own — a
+   * `setInterval` that fires late loses that time for good, and after a few
+   * minutes the words no longer describe what the circle is doing.
+   *
+   * Reading the elapsed time instead means a late tick corrects itself. The
+   * clock starts when the exercise opens, which is also when the element mounts
+   * and its animation begins, so the two share a zero. Ticking faster than once
+   * a second is what lands the phase change on the boundary rather than up to a
+   * second after it; the extra ticks are free, because setting a state value to
+   * the one it already holds does not re-render.
+   */
+  const activeSessionId = activeSession?.id ?? null;
   useEffect(() => {
-    if (!activeSession || activeTab !== "breathing") return;
-    const timer = setInterval(() => {
-      setBreathingSeconds((prev) => {
-        if (prev <= 1) {
-          setBreathingPhase((phase) => {
-            if (phase === "Inhale") return "Hold";
-            if (phase === "Hold") return "Exhale";
-            return "Inhale";
-          });
-          return 4;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    if (activeSessionId === null || activeTab !== "breathing") return;
+    const startedAt = performance.now();
+    const tick = () => {
+      const { phase, remaining } = breathAt((performance.now() - startedAt) / 1000);
+      setBreathingPhase(phase);
+      setBreathingSeconds(remaining);
+    };
+    tick();
+    const timer = setInterval(tick, 200);
     return () => clearInterval(timer);
-  }, [activeSession, activeTab]);
-
-  // Sound generator toggle
-  function toggleMaskingAudio() {
-    if (isAudioPlaying) {
-      if (audioCtxRef.current) {
-        audioCtxRef.current.close();
-        audioCtxRef.current = null;
-      }
-      setIsAudioPlaying(false);
-    } else {
-      try {
-        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-        const ctx = new AudioContextClass();
-        audioCtxRef.current = ctx;
-
-        const bufferSize = ctx.sampleRate * 2;
-        const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-        const output = noiseBuffer.getChannelData(0);
-        for (let i = 0; i < bufferSize; i++) {
-          if (soundType === "pink") {
-            const white = Math.random() * 2 - 1;
-            output[i] = white * 0.5;
-          } else {
-            output[i] = Math.random() * 2 - 1;
-          }
-        }
-
-        const whiteNoise = ctx.createBufferSource();
-        whiteNoise.buffer = noiseBuffer;
-        whiteNoise.loop = true;
-
-        const gainNode = ctx.createGain();
-        gainNode.gain.value = 0.08;
-
-        if (soundType === "notch") {
-          const filter = ctx.createBiquadFilter();
-          filter.type = "notch";
-          filter.frequency.value = 4000;
-          filter.Q.value = 5.0;
-          whiteNoise.connect(filter);
-          filter.connect(gainNode);
-        } else {
-          whiteNoise.connect(gainNode);
-        }
-
-        gainNode.connect(ctx.destination);
-        whiteNoise.start();
-        noiseNodeRef.current = whiteNoise;
-        setIsAudioPlaying(true);
-      } catch {
-        toast("Audio synthesizer failed to start", "crit");
-      }
-    }
-  }
+    // Keyed on the room's id, never the room object. The room is re-fetched every
+    // few seconds by the poll and comes back as a fresh object each time, so
+    // depending on it would tear this down and restart the clock mid-breath —
+    // the count would keep falling back to four and the exercise would never
+    // reach the hold.
+  }, [activeSessionId, activeTab]);
 
   async function loadHubSessions() {
     setLoadingHub(true);
@@ -1436,76 +1454,39 @@ export default function GroupTherapy() {
                 </button>
               </div>
 
-              {/* TAB 1: SYNCHRONIZED BREATHING & SOUNDSCAPE */}
+              {/* TAB 1: SYNCHRONIZED BREATHING */}
               {activeTab === "breathing" && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--s5)", alignItems: "center" }}>
-                  <div className="panel" style={{ background: "rgba(15,23,42,0.8)", padding: "var(--s5)", borderRadius: "var(--radius-md)", textAlign: "center" }}>
-                    <span className="label label--signal">GUIDED BREATHING CIRCLE</span>
+                <div className="panel breath-panel" style={{ background: "rgba(15,23,42,0.8)", padding: "var(--s5)", borderRadius: "var(--radius-lg)", textAlign: "center" }}>
+                  <span className="label label--signal">GUIDED BREATHING · 4-7-8</span>
 
-                    {/* Animated Breathing Sphere */}
-                    <div
-                      style={{
-                        width: "140px",
-                        height: "140px",
-                        borderRadius: "50%",
-                        margin: "var(--s3) auto",
-                        background:
-                          breathingPhase === "Inhale"
-                            ? "radial-gradient(circle, rgba(59,130,246,0.8) 0%, rgba(37,99,235,0.2) 70%)"
-                            : breathingPhase === "Hold"
-                              ? "radial-gradient(circle, rgba(16,185,129,0.8) 0%, rgba(5,150,105,0.2) 70%)"
-                              : "radial-gradient(circle, rgba(139,92,246,0.8) 0%, rgba(124,58,237,0.2) 70%)",
-                        boxShadow: "0 0 40px rgba(59,130,246,0.4)",
-                        display: "flex",
-                        flexDirection: "column",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        transition: "all 1s ease-in-out",
-                        transform: breathingPhase === "Inhale" ? "scale(1.12)" : breathingPhase === "Hold" ? "scale(1.12)" : "scale(0.88)",
-                      }}
-                    >
-                      <strong style={{ fontSize: "var(--fs-headline-sm)", color: "#fff" }}>{breathingPhase}</strong>
-                      <span style={{ fontSize: "var(--fs-medium)", color: "rgba(255,255,255,0.8)" }}>{breathingSeconds}s</span>
-                    </div>
-
-                    <p className="meta" style={{ margin: 0 }}>Breathe in sync with your group to calm auditory nerve hyper-reactivity.</p>
-                  </div>
-
-                  {/* Sound Masking Synthesizer */}
-                  <div className="panel stack stack-3" style={{ textAlign: "left", background: "rgba(15,23,42,0.8)" }}>
-                    <h3 style={{ margin: 0 }}>Group Tinnitus Masking Synthesizer</h3>
-                    <p className="meta" style={{ margin: 0 }}>Play background acoustic masking while doing group activities.</p>
-
-                    <div className="stack stack-3" style={{ marginTop: "var(--s2)" }}>
-                      <div className="stack stack-1">
-                        <label className="meta" style={{ fontWeight: 600 }}>Sound Masker:</label>
-                        <select
-                          value={soundType}
-                          onChange={(e) => setSoundType(e.target.value as any)}
-                          className="input"
-                          style={{
-                            width: "100%",
-                            background: "rgba(15, 23, 42, 0.95)",
-                            color: "#f8fafc",
-                            border: "1px solid rgba(148, 163, 184, 0.4)",
-                          }}
-                        >
-                          <option value="notch">Notch Noise Filter</option>
-                          <option value="pink">Pink Soundscape</option>
-                          <option value="white">Broadband White</option>
-                        </select>
-                      </div>
-
-                      <button
-                        type="button"
-                        className={`btn ${isAudioPlaying ? "btn--outline" : "btn--primary"}`}
-                        onClick={toggleMaskingAudio}
-                        style={{ width: "100%", fontWeight: "bold" }}
-                      >
-                        {isAudioPlaying ? "🔇 Stop Masking Sound" : "🔊 Play Masking Sound"}
-                      </button>
+                  {/* The circle runs on one CSS animation the length of a whole
+                      4-7-8 cycle, so it expands, holds and empties in one
+                      continuous movement. The label is the only part React
+                      updates. */}
+                  <div className="breath-stage" role="img" aria-label={`${breathingPhase} for ${breathingSeconds} more seconds`}>
+                    <span className="breath-halo breath-halo--1" aria-hidden="true" />
+                    <span className="breath-halo breath-halo--2" aria-hidden="true" />
+                    <span className="breath-track" aria-hidden="true">
+                      {/* The three marks are where the phases change, so the
+                          4-7-8 split is visible as proportions of the ring
+                          rather than something to take on trust. */}
+                      <i className="breath-tick breath-tick--inhale" />
+                      <i className="breath-tick breath-tick--hold" />
+                      <i className="breath-tick breath-tick--exhale" />
+                    </span>
+                    <span className="breath-orbit" aria-hidden="true">
+                      <i className="breath-pip" />
+                    </span>
+                    <div className={`breath-orb breath-orb--${breathingPhase.toLowerCase()}`}>
+                      <strong className="breath-orb__phase">{breathingPhase}</strong>
+                      <span className="breath-orb__count">{breathingSeconds}s</span>
                     </div>
                   </div>
+
+                  <p className="meta" style={{ margin: 0 }}>
+                    In through the nose for 4, hold for 7, out through the mouth for 8. Breathe in sync with your
+                    group to calm auditory nerve hyper-reactivity.
+                  </p>
                 </div>
               )}
 
@@ -1672,6 +1653,10 @@ export default function GroupTherapy() {
                       maxHeight: "280px",
                       overflowY: "auto",
                       paddingRight: "4px",
+                      // The pins overhang the top of their notes, and this is a
+                      // scroll container, so without headroom the first row's
+                      // pins are sliced off at the boundary.
+                      paddingTop: "10px",
                     }}
                   >
                     {activityResponses.filter((r) => r.activity_type === "gratitude_wall").length === 0 ? (
@@ -1693,13 +1678,22 @@ export default function GroupTherapy() {
                               // The class is dropped once the note has landed, so a
                               // later re-render cannot restart the animation under
                               // a note that is already stuck to the wall.
+                              //
+                              // Only the note's own animation counts. The pin
+                              // animates too and its end bubbles up through here,
+                              // which would pull the class — and with it the pin —
+                              // before the note had finished landing.
                               onAnimationEnd={
                                 sticking
-                                  ? () => setStickingNoteIds((prev) => prev.filter((id) => id !== r.id))
+                                  ? (e) => {
+                                      if (e.target !== e.currentTarget) return;
+                                      setStickingNoteIds((prev) => prev.filter((id) => id !== r.id));
+                                    }
                                   : undefined
                               }
                               style={{ background: noteBg }}
                             >
+                              <span className="gratitude-note__pin" aria-hidden="true" />
                               <p style={{ margin: 0, fontWeight: 500, fontSize: "var(--fs-small)" }}>"{r.response_data.note}"</p>
                               <span style={{ fontSize: "10px", fontWeight: "bold", textAlign: "right", marginTop: "8px", opacity: 0.8 }}>
                                 — {r.user_name}

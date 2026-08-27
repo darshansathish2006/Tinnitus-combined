@@ -1109,14 +1109,14 @@ export default function Community() {
               position: "fixed",
               right: "24px",
               bottom: "24px",
-              background: "var(--surface)",
-              border: "1px solid var(--ink-line)",
+              background: "var(--paper-raised)",
+              border: "var(--hairline) solid var(--ink)",
               borderRadius: "14px",
               padding: "14px",
               width: "min(300px, calc(100vw - 32px))",
               maxHeight: "min(360px, calc(100vh - 48px))",
               overflowY: "auto",
-              boxShadow: "0 12px 28px rgba(0, 0, 0, 0.18)",
+              boxShadow: "var(--shadow-lg)",
             }}
             onClick={(e) => e.stopPropagation()}
           >
@@ -1127,7 +1127,7 @@ export default function Community() {
               <button
                 type="button"
                 onClick={() => setActiveReadModalMsg(null)}
-                style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: "var(--ink-muted)" }}
+                style={{ background: "none", border: "none", fontSize: "18px", cursor: "pointer", color: "var(--ink-3)" }}
               >
                 ✕
               </button>
@@ -1139,7 +1139,7 @@ export default function Community() {
                 lineHeight: 1.45,
                 color: "var(--ink)",
                 marginBottom: "12px",
-                background: "var(--surface-sunken)",
+                background: "var(--paper-sunken)",
                 padding: "8px 10px",
                 borderRadius: "8px",
                 borderLeft: "3px solid var(--signal)",
@@ -1160,7 +1160,7 @@ export default function Community() {
                   </h4>
                 </div>
                 {!activeReadModalMsg.read_by_members || activeReadModalMsg.read_by_members.length === 0 ? (
-                  <div style={{ fontSize: "12px", color: "var(--ink-muted)", paddingLeft: "20px" }}>No members have read this message yet.</div>
+                  <div style={{ fontSize: "12px", color: "var(--ink-3)", paddingLeft: "20px" }}>No members have read this message yet.</div>
                 ) : (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", paddingLeft: "4px" }}>
                     {activeReadModalMsg.read_by_members.map((m, idx) => (
@@ -1175,8 +1175,8 @@ export default function Community() {
               {/* Not read yet section */}
               <div style={{ marginTop: "8px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "8px" }}>
-                  <span style={{ color: "var(--ink-muted)", fontWeight: 700 }}>○</span>
-                  <h4 style={{ fontSize: "13.5px", fontWeight: 700, color: "var(--ink-muted)", margin: 0 }}>
+                  <span style={{ color: "var(--ink-3)", fontWeight: 700 }}>○</span>
+                  <h4 style={{ fontSize: "13.5px", fontWeight: 700, color: "var(--ink-3)", margin: 0 }}>
                     Not read yet ({activeReadModalMsg.unread_members ? activeReadModalMsg.unread_members.length : 0})
                   </h4>
                 </div>
@@ -1187,7 +1187,7 @@ export default function Community() {
                 ) : (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", paddingLeft: "4px" }}>
                     {activeReadModalMsg.unread_members.map((m, idx) => (
-                      <span key={idx} style={{ background: "var(--surface-sunken)", color: "var(--ink-muted)", padding: "4px 12px", borderRadius: "14px", fontSize: "12px", border: "1px solid var(--ink-line)" }}>
+                      <span key={idx} style={{ background: "var(--paper-sunken)", color: "var(--ink-3)", padding: "4px 12px", borderRadius: "14px", fontSize: "12px", border: "var(--hairline) solid var(--line-faint)" }}>
                         {m}
                       </span>
                     ))}
