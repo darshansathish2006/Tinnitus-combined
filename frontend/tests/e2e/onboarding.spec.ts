@@ -10,7 +10,7 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { CLINICIAN_EMAIL, DEMO_PASSWORD, PATIENT_EMAIL, attachConsoleGuard } from "./helpers";
 
-const API = "http://127.0.0.1:8000";
+const API = "http://127.0.0.1:9000";
 
 async function signIn(page: Page, email: string, password: string) {
   await page.goto("/");

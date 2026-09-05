@@ -55,6 +55,70 @@ function interOctaveNeeded(thresholds: Record<string, number>): number[] {
   return needed;
 }
 
+/**
+ * A starting level informed by what this ear's audiogram already shows,
+ * rather than a blind 40 dB HL for every one of the 14 frequency/ear
+ * searches.
+ *
+ * An audiogram is a smooth curve, not fourteen independent draws — the
+ * threshold just measured at an adjacent frequency (or, for the very first
+ * frequency of the second ear, the other ear's threshold at the same
+ * frequency) is a far better starting guess than a fixed value. Starting
+ * 10 dB *above* that estimate preserves exactly the shape `ThresholdTracker`
+ * has always assumed: the first presentation should be comfortably audible
+ * so the descending run can establish audibility before the ascending run
+ * finds threshold. This is the same seeding principle standard computerised
+ * audiometers use to shorten testing — it changes nothing about the
+ * tracker's bracketing, convergence rule, or floor/ceiling handling, only
+ * where it starts.
+ *
+ * Falls back to 40 dB HL — the previous fixed starting point — whenever no
+ * informative prior measurement exists yet, which is only true for the very
+ * first frequency tested on the very first ear.
+ */
+function estimateStartLevel(
+  ear: Ear,
+  freq: number,
+  stepIndex: number,
+  audiogram: Record<Ear, Record<string, number>>
+): number {
+  const FALLBACK_DB_HL = 40;
+  const AUDIBILITY_MARGIN_DB = 10;
+  const seed = (threshold: number | undefined): number | null =>
+    threshold === undefined ? null : threshold + AUDIBILITY_MARGIN_DB;
+
+  let estimate: number | null = null;
+
+  if (stepIndex === 0) {
+    // First frequency of this ear (1 kHz). The right ear goes first and has
+    // no prior information at all; the left ear can start near the right
+    // ear's already-measured 1 kHz threshold.
+    if (ear === "left") estimate = seed(audiogram.right?.["1000"]);
+  } else if (stepIndex === CORE_SEQUENCE.length - 1) {
+    // The 1 kHz reliability retest — start near this same ear's own first
+    // 1 kHz measurement, not near 250 Hz (the frequency immediately before
+    // it in the sequence), since retesting the same frequency is best seeded
+    // from that frequency's own prior result.
+    estimate = seed(audiogram[ear]?.["1000"]);
+  } else if (stepIndex < CORE_SEQUENCE.length) {
+    // Every other core frequency: start near the previous frequency in this
+    // ear's own sequence.
+    estimate = seed(audiogram[ear]?.[String(CORE_SEQUENCE[stepIndex - 1])]);
+  } else {
+    // Inter-octave frequency (3 kHz or 6 kHz), only ever reached once both of
+    // its flanking octaves are already measured — seed from their average.
+    const trigger = INTER_OCTAVE_TRIGGERS.find(([f]) => f === freq);
+    if (trigger) {
+      const [, low, high] = trigger;
+      const a = audiogram[ear]?.[String(low)];
+      const b = audiogram[ear]?.[String(high)];
+      if (a !== undefined && b !== undefined) estimate = seed((a + b) / 2);
+    }
+  }
+
+  return estimate ?? FALLBACK_DB_HL;
+}
+
 type Phase = "idle" | "presenting" | "gap" | "done";
 
 export interface AudiometryResult {
@@ -142,9 +206,18 @@ export default function Audiometry({
 
   /** Fresh tracker whenever the ear or frequency changes. */
   useEffect(() => {
-    tracker.current = new ThresholdTracker(freq, ear, { startDbHl: 40, maxDbHl: Math.min(90, engine.maxReachableHl(freq)) });
+    const maxDbHl = Math.min(90, engine.maxReachableHl(freq));
+    const startDbHl = Math.max(-10, Math.min(maxDbHl, estimateStartLevel(ear, freq, stepIndex, audiogram)));
+    tracker.current = new ThresholdTracker(freq, ear, { startDbHl, maxDbHl });
     setPhase("idle");
-  }, [freq, ear]);
+    // `audiogram` is deliberately not a dependency: `setAudiogram` and the
+    // `stepIndex`/`ear` advance that changes `freq` are committed in the same
+    // update from `finishFrequency`, so by the time this effect re-runs (on
+    // `freq`/`ear`/`stepIndex` changing) it always reads the audiogram as of
+    // that same render, not a stale one — and re-running it on every
+    // in-place audiogram edit would rebuild the tracker mid-measurement.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [freq, ear, stepIndex]);
 
   const finishFrequency = useCallback(() => {
     const current = tracker.current;

@@ -91,7 +91,7 @@ test.describe("language selection", () => {
     const me = await page.evaluate(async () => {
       const session = JSON.parse(localStorage.getItem("echosense.session") ?? "{}");
       const token = session?.state?.session?.access_token;
-      const response = await fetch("http://127.0.0.1:8000/api/auth/me", {
+      const response = await fetch("http://127.0.0.1:9000/api/auth/me", {
         headers: { Authorization: `Bearer ${token}` },
       });
       return response.json();

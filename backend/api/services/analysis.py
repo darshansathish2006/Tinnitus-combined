@@ -108,6 +108,18 @@ def assessment_dict(assessment: Any) -> dict[str, Any]:
         "vas_annoyance": assessment.vas_annoyance,
         "vas_awareness": assessment.vas_awareness,
         "vas_sleep_interference": assessment.vas_sleep_interference,
+        # `score_vas()` (and the clinical report's own VAS table) expect the
+        # four scales nested under "vas", the same shape `apply_submission`
+        # accepts on write and `rescore()` already builds for its own scoring
+        # pass. Without this nested key, `score_all()` here always read the
+        # scales as absent — the four flat fields above were being stored
+        # correctly but never actually scored or reported on.
+        "vas": {
+            "vas_loudness": assessment.vas_loudness,
+            "vas_annoyance": assessment.vas_annoyance,
+            "vas_awareness": assessment.vas_awareness,
+            "vas_sleep_interference": assessment.vas_sleep_interference,
+        },
         "psqi_items": assessment.psqi_items or {},
         "psqi_score": assessment.psqi_score,
         "pss10_items": assessment.pss10_items or {},

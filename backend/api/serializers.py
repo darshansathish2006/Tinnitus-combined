@@ -98,8 +98,8 @@ class PatientSerializer(serializers.ModelSerializer):
             "onset_date", "duration_months", "tinnitus_character", "tinnitus_characters", "laterality",
             "pulsatile", "somatic_modulation", "hyperacusis", "hearing_aid_use",
             "noise_exposure_years", "comorbidities", "medications", "etiology_notes",
-            "consent_research", "clinician_id", "clinician_name", "has_saved_calibration",
-            "saved_device_profile",
+            "about_you", "consent_research", "clinician_id", "clinician_name",
+            "has_saved_calibration", "saved_device_profile",
         ]
         read_only_fields = ["id", "mrn", "clinician_id", "saved_device_profile"]
 
@@ -121,6 +121,11 @@ class PatientProfileUpdateSerializer(serializers.ModelSerializer):
         required=False,
         allow_empty=True,
     )
+    # The extended About You questionnaire. Unvalidated per-item, the same as
+    # `thi_items` on `Assessment` — the option lists that constrain each answer
+    # live in the frontend's question registry, not duplicated here as a second
+    # schema that the two would have to be kept in step with by hand.
+    about_you = serializers.DictField(required=False)
 
     def validate_tinnitus_characters(self, value: list[str]) -> list[str]:
         """De-duplicate, trim, and cap. Order is the patient's own.
@@ -147,7 +152,88 @@ class PatientProfileUpdateSerializer(serializers.ModelSerializer):
         characters = validated_data.get("tinnitus_characters")
         if characters is not None:
             validated_data["tinnitus_character"] = characters[0] if characters else ""
+
+        about_you = validated_data.get("about_you")
+        if about_you is not None:
+            self._sync_about_you(about_you, validated_data)
+
         return super().update(instance, validated_data)
+
+    def _sync_about_you(self, about_you: dict, validated_data: dict) -> None:
+        """Mirror a handful of About You answers onto the discrete fields the
+        rest of the system already reads.
+
+        Only three answers are mirrored, and each exists for a concrete reason:
+
+        * **Pulsatile** (Section 6) drives `Patient.pulsatile`, which
+          `clinical.redflags.evaluate_red_flags` already checks to raise an
+          *urgent* referral for vascular imaging. About You is the only place
+          this question is asked now — folding its answer into the same
+          boolean the existing rule reads means that rule keeps working
+          unchanged rather than needing a second copy of it that reads
+          `about_you` instead. Only a literal "Yes" sets it True and only a
+          literal "No" sets it False; "I'm not sure" leaves the field as it
+          was, because collapsing genuine uncertainty into "no" would suppress
+          a flag that should fire, and collapsing it into "yes" would raise
+          one on a patient who did not report the symptom.
+        * **Somatic modulation** (Section 12, "does movement affect your
+          tinnitus?") is asked as five separate movement types rather than the
+          existing form's one checkbox. A "Yes" to *any* of them sets
+          `somatic_modulation` True — OR'd with whatever the checkbox already
+          contributed in the same payload, so neither can suppress a true
+          positive reported through the other control.
+        * **Comorbidities** (Section 16) and **medications** (Section 18) are
+          *merged into*, not replacing, the existing lists the History
+          disclosure and the medications textarea already write — so a
+          clinician reading `comorbidities`/`medications` sees the union of
+          both entry points, and the substring-matching neuro red-flag rules
+          keep seeing every term they already saw.
+
+        Everything else in `about_you` is stored verbatim and read nowhere
+        else; this function only touches the fields that already had a reader
+        before About You existed.
+        """
+        pulsatile_answer = about_you.get("pulsatile_beats_with_heart")
+        if pulsatile_answer == "Yes":
+            validated_data["pulsatile"] = True
+        elif pulsatile_answer == "No":
+            validated_data["pulsatile"] = False
+
+        movement_keys = (
+            "movement_head_neck", "movement_jaw", "movement_touch",
+            "movement_body_position", "movement_exercise",
+        )
+        # Only ever sets True here, never False — a movement answer of "No" or
+        # "I'm not sure" must not erase a positive the checkbox already sent in
+        # the same payload, so this branch is additive-only.
+        if any(about_you.get(k) == "Yes" for k in movement_keys):
+            validated_data["somatic_modulation"] = True
+
+        section16 = about_you.get("medical_conditions_select")
+        if isinstance(section16, list) and section16:
+            existing = list(validated_data.get("comorbidities", self.instance.comorbidities) or [])
+            validated_data["comorbidities"] = existing + [c for c in section16 if c not in existing]
+
+        detailed_meds = about_you.get("medications_detailed")
+        if isinstance(detailed_meds, list) and detailed_meds:
+            formatted = []
+            for entry in detailed_meds:
+                if not isinstance(entry, dict):
+                    continue
+                name = str(entry.get("name") or "").strip()
+                if not name:
+                    continue
+                dose = str(entry.get("dose") or "").strip()
+                frequency = str(entry.get("frequency") or "").strip()
+                label = name
+                if dose:
+                    label += f" {dose}"
+                if frequency:
+                    label += f" — {frequency}"
+                formatted.append(label)
+            if formatted:
+                existing = list(validated_data.get("medications", self.instance.medications) or [])
+                validated_data["medications"] = existing + [m for m in formatted if m not in existing]
 
     class Meta:
         model = Patient
@@ -155,7 +241,7 @@ class PatientProfileUpdateSerializer(serializers.ModelSerializer):
             "date_of_birth", "sex", "phone", "onset_date", "tinnitus_character", "tinnitus_characters", "laterality",
             "pulsatile", "somatic_modulation", "hyperacusis", "hearing_aid_use",
             "noise_exposure_years", "comorbidities", "medications", "etiology_notes",
-            "consent_research",
+            "about_you", "consent_research",
         ]
         extra_kwargs = {
             "noise_exposure_years": {"min_value": 0, "max_value": 80},
@@ -208,8 +294,32 @@ class AssessmentSubmitSerializer(serializers.Serializer):
     octave_confusion = serializers.BooleanField(required=False, allow_null=True)
     pitch_match_trace = serializers.ListField(required=False)
 
+    pitch_match_sound_description = serializers.ChoiceField(
+        choices=["Ringing", "Whistling", "Buzzing", "Hissing", "Other", "Not sure"],
+        required=False,
+        allow_blank=True,
+    )
+    pitch_match_sound_other_text = serializers.CharField(required=False, allow_blank=True, max_length=200)
+    pitch_match_initial_level_db = serializers.FloatField(required=False, allow_null=True, min_value=-10, max_value=100)
+    pitch_match_comfort_level_db = serializers.FloatField(required=False, allow_null=True, min_value=-10, max_value=100)
+    pitch_match_not_sure_count = serializers.IntegerField(required=False, allow_null=True, min_value=0, max_value=100)
+    pitch_match_octave_frequency_hz = serializers.FloatField(required=False, allow_null=True, min_value=50, max_value=20000)
+    pitch_match_octave_response = serializers.ChoiceField(
+        choices=["matched", "octave_higher", "not_sure"], required=False, allow_blank=True
+    )
+    pitch_match_confirmation = serializers.ChoiceField(
+        choices=["very_similar", "somewhat_similar", "not_similar"], required=False, allow_blank=True
+    )
+    pitch_match_repeated = serializers.BooleanField(required=False)
+
     loudness_match_db_sl = serializers.FloatField(required=False, allow_null=True, min_value=0, max_value=80)
     loudness_match_db_hl = serializers.FloatField(required=False, allow_null=True, min_value=-10, max_value=130)
+    loudness_match_starting_level_db = serializers.FloatField(required=False, allow_null=True, min_value=-10, max_value=130)
+    loudness_match_trace = serializers.ListField(required=False)
+    loudness_match_confirmation = serializers.ChoiceField(
+        choices=["very_similar", "somewhat_similar"], required=False, allow_blank=True
+    )
+    loudness_match_repeated = serializers.BooleanField(required=False)
     mml_db_sl = serializers.FloatField(required=False, allow_null=True, min_value=0, max_value=90)
     # Bounded to the band the audiometer can actually deliver a masker in.
     mml_masker_hz = serializers.FloatField(required=False, allow_null=True, min_value=50, max_value=20000)
@@ -226,6 +336,26 @@ class AssessmentSubmitSerializer(serializers.Serializer):
     )
     ldl_left = serializers.FloatField(required=False, allow_null=True, min_value=40, max_value=130)
     ldl_right = serializers.FloatField(required=False, allow_null=True, min_value=40, max_value=130)
+    # The complete multi-frequency, multi-ear Sound Tolerance trial history —
+    # additive to `ldl_left`/`ldl_right` above.
+    ldl_trace = serializers.ListField(required=False)
+    ldl_repeated = serializers.BooleanField(required=False)
+    # The structured 4-way immediate response — additive to
+    # `ri_reported_category` above, which has no "louder" option.
+    ri_immediate_response = serializers.ChoiceField(
+        choices=["COMPLETELY_ABSENT", "REDUCED", "NO_CHANGE", "LOUDER"], required=False, allow_blank=True
+    )
+    ri_baseline_pct = serializers.FloatField(required=False, allow_null=True, min_value=0, max_value=100)
+    ri_post_stimulation_pct = serializers.FloatField(required=False, allow_null=True, min_value=0, max_value=100)
+    ri_monitoring = serializers.ListField(required=False)
+    ri_stimulus_frequency_hz = serializers.FloatField(required=False, allow_null=True, min_value=50, max_value=20000)
+    ri_stimulus_level_db = serializers.FloatField(required=False, allow_null=True, min_value=-10, max_value=130)
+    ri_stimulation_duration_s = serializers.FloatField(required=False, allow_null=True, min_value=0, max_value=600)
+    ri_stimulation_started_at = serializers.IntegerField(required=False, allow_null=True)
+    ri_stimulation_stopped_at = serializers.IntegerField(required=False, allow_null=True)
+    ri_reduction_detected_at = serializers.IntegerField(required=False, allow_null=True)
+    ri_return_to_baseline_at = serializers.IntegerField(required=False, allow_null=True)
+    ri_repeated = serializers.BooleanField(required=False)
 
     # {"250": 28.0, ...} — the per-frequency minimum masking level. Bounds are
     # checked in the view against the same range the audiometer can deliver;
@@ -237,6 +367,9 @@ class AssessmentSubmitSerializer(serializers.Serializer):
     masking_unmasked_hz = serializers.ListField(
         child=serializers.FloatField(min_value=20, max_value=20000), required=False
     )
+    masking_trace = serializers.ListField(required=False)
+    masking_not_sure_count = serializers.IntegerField(required=False, allow_null=True, min_value=0, max_value=200)
+    masking_repeated = serializers.BooleanField(required=False)
     # `reference_level_db` / `_hz` are deliberately absent. They are derived
     # server-side from the thresholds above — see `assessment_save` — so that a
     # client cannot submit a summary that disagrees with the data it summarises.
@@ -250,6 +383,14 @@ class AssessmentSubmitSerializer(serializers.Serializer):
     gad2_items = serializers.DictField(required=False)
     phq2_items = serializers.DictField(required=False)
     sleep_screen_items = serializers.DictField(required=False)
+    # Per-instrument status for the About Your Tinnitus module's skip feature —
+    # {"thi": "completed"} or {"gad7": "skipped"}. Merged onto the stored dict,
+    # never replacing it, so completing one instrument cannot erase another's
+    # recorded skip.
+    questionnaire_status = serializers.DictField(
+        child=serializers.ChoiceField(choices=["not_started", "in_progress", "completed", "skipped"]),
+        required=False,
+    )
     # Which indicated long forms were completed, and which the patient deferred.
     # Recorded so an absent long-form score can be read as "declined, still
     # recommended" rather than "screened negative".

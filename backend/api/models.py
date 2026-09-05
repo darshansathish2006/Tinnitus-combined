@@ -143,6 +143,27 @@ class Patient(models.Model):
     comorbidities = models.JSONField(default=list, blank=True)
     medications = models.JSONField(default=list, blank=True)
     etiology_notes = models.TextField(blank=True, default="")
+
+    # The extended "About You" intake questionnaire (onset, character detail,
+    # loudness/noticeability scales, aggravating/relieving factors, ear health,
+    # medical history detail, medication entries, previous care, noise exposure,
+    # family history, and the same-visit tinnitus snapshot).
+    #
+    # Stored the same way `thi_items` stores a scored instrument's raw responses:
+    # a flat JSON dict keyed by question id, one entry per question. That keeps
+    # every answer individually addressable (never flattened into one text blob)
+    # without a column-per-question schema that would need a migration for every
+    # future question. It lives on `Patient`, not `Assessment`, because About You
+    # already saves through `PATCH /api/patients/me` as patient-level history —
+    # the same call that already carries `laterality`, `pulsatile` and the rest —
+    # so a returning patient's answers persist and are editable the same way
+    # those already do.
+    #
+    # A handful of these answers are also mirrored onto the discrete fields
+    # above (see `PatientProfileUpdateSerializer.update`) so the existing
+    # red-flag rules, ML feature vector and comorbidity/medication lists keep
+    # reading from exactly the fields they already read from.
+    about_you = models.JSONField(default=dict, blank=True)
     consent_research = models.BooleanField(default=False)
 
     # Remembered so a returning patient can reuse their headphone calibration
@@ -224,10 +245,59 @@ class Assessment(models.Model):
     pitch_match_ear = models.CharField(max_length=16, choices=Ear.choices, blank=True, default="")
     pitch_match_confidence = models.FloatField(null=True, blank=True)
     octave_confusion = models.BooleanField(null=True, blank=True)
+    # One entry per trial of the adaptive 2AFC narrowing search — the complete
+    # path from the initial 1000/8000 Hz pair through fine matching, including
+    # every "Not Sure" response, not just the frequencies that led to the
+    # final match. See `PitchNarrower` in `audio/procedures.ts`.
     pitch_match_trace = models.JSONField(default=list, blank=True)
+
+    # -- pitch-match patient-reported context (asked inside the module) ----- #
+    # What the patient says their tinnitus sounds like, asked fresh at the
+    # start of this module rather than only inferred from the intake answer,
+    # per the pitch-match workflow. Kept separate from `Patient.tinnitus_character`
+    # so neither ever silently overwrites the other.
+    pitch_match_sound_description = models.CharField(max_length=32, blank=True, default="")
+    pitch_match_sound_other_text = models.CharField(max_length=200, blank=True, default="")
+    # The level the patient set before pitch matching began, and the level
+    # they confirmed as comfortable — kept separate because the confirmed
+    # level is what stays fixed through the whole comparison task, while the
+    # initial value is only the starting point they adjusted from.
+    pitch_match_initial_level_db = models.FloatField(null=True, blank=True)
+    pitch_match_comfort_level_db = models.FloatField(null=True, blank=True)
+    # How many times the patient answered "Not Sure" during the 2AFC search —
+    # never folded into the A/B tally, reported on its own.
+    pitch_match_not_sure_count = models.IntegerField(null=True, blank=True)
+    # The one-octave verification step: the comparison frequency (matched × 2)
+    # and which of the two — or neither — the patient chose.
+    pitch_match_octave_frequency_hz = models.FloatField(null=True, blank=True)
+    pitch_match_octave_response = models.CharField(max_length=24, blank=True, default="")
+    # The patient's own closing rating of the match quality.
+    pitch_match_confirmation = models.CharField(max_length=24, blank=True, default="")
+    # True when the patient chose "Repeat Pitch Matching" and completed the
+    # module again. The earlier attempt is not retained as a separate record —
+    # like every other module here, a redo overwrites this module's own
+    # columns — but nothing else on the assessment is touched or deleted.
+    pitch_match_repeated = models.BooleanField(default=False)
 
     loudness_match_db_sl = models.FloatField(null=True, blank=True)
     loudness_match_db_hl = models.FloatField(null=True, blank=True)
+    # The level the ascending "I can hear it" sweep found before adaptive
+    # comparison began — kept separate from `loudness_match_db_hl`, which is
+    # the final matched level, the same way pitch match keeps its initial and
+    # comfort levels apart.
+    loudness_match_starting_level_db = models.FloatField(null=True, blank=True)
+    # One entry per trial of the adaptive intensity search — the complete
+    # coarse-then-fine path, not just the final level. See `LoudnessMatcher`
+    # in `audio/procedures.ts`.
+    loudness_match_trace = models.JSONField(default=list, blank=True)
+    # The patient's own closing rating of the match quality. "No, try again"
+    # is never stored here — it loops back to fine matching instead of
+    # producing a terminal value.
+    loudness_match_confirmation = models.CharField(max_length=24, blank=True, default="")
+    # True when the patient chose "Repeat Assessment" and completed the
+    # module again — a redo overwrites this module's own columns, like every
+    # other module here, without touching or deleting anything else.
+    loudness_match_repeated = models.BooleanField(default=False)
     mml_db_sl = models.FloatField(null=True, blank=True)
     # The centre frequency the masking band was actually set to when the MML was
     # taken. Null means it was measured at the tinnitus pitch, which is what the
@@ -250,6 +320,32 @@ class Assessment(models.Model):
     tinnitus_bandwidth = models.CharField(max_length=24, choices=Bandwidth.choices, blank=True, default="")
     ldl_left = models.FloatField(null=True, blank=True)
     ldl_right = models.FloatField(null=True, blank=True)
+    # The complete multi-frequency, multi-ear Sound Tolerance (ULL/LDL) trial
+    # history — additive to `ldl_left`/`ldl_right` above, which keep their
+    # original meaning (the 1 kHz result for each ear). One entry per
+    # frequency tested, each carrying its own trial-by-trial trace. See
+    # `ToleranceLevelFinder` in `audio/procedures.ts`.
+    ldl_trace = models.JSONField(default=list, blank=True)
+    ldl_repeated = models.BooleanField(default=False)
+    # The patient's structured 4-way immediate response, asked right after the
+    # masker stops — additive to `ri_reported_category` above, which cannot
+    # represent "louder" on its own. `finish()` in `TinnitusMatch.tsx` derives
+    # the 3-way value from this one so both stay consistent.
+    ri_immediate_response = models.CharField(max_length=24, blank=True, default="")
+    ri_baseline_pct = models.FloatField(null=True, blank=True)
+    ri_post_stimulation_pct = models.FloatField(null=True, blank=True)
+    # One entry per monitoring check-in during the recovery window —
+    # {"elapsed_s", "response", "at"} — additive detail behind the sparse
+    # `ri_trace` points `analyseResidualInhibition` actually consumes.
+    ri_monitoring = models.JSONField(default=list, blank=True)
+    ri_stimulus_frequency_hz = models.FloatField(null=True, blank=True)
+    ri_stimulus_level_db = models.FloatField(null=True, blank=True)
+    ri_stimulation_duration_s = models.FloatField(null=True, blank=True)
+    ri_stimulation_started_at = models.BigIntegerField(null=True, blank=True)
+    ri_stimulation_stopped_at = models.BigIntegerField(null=True, blank=True)
+    ri_reduction_detected_at = models.BigIntegerField(null=True, blank=True)
+    ri_return_to_baseline_at = models.BigIntegerField(null=True, blank=True)
+    ri_repeated = models.BooleanField(default=False)
 
     # -- masking threshold profile ------------------------------------------ #
     # The minimum level, per frequency, at which a masking band renders the
@@ -266,6 +362,21 @@ class Assessment(models.Model):
     # separate from a null in the map above: "we tried and it would not mask"
     # is a finding, and it is the finding that contraindicates masking therapy.
     masking_unmasked_hz = models.JSONField(default=list, blank=True)
+    # The complete per-frequency adaptive trial history for the Feldmann
+    # masking-curve workflow — one entry per `MASKING_FREQUENCIES` frequency,
+    # each carrying every trial (level, response) and the resulting MML.
+    # Additive to `masking_thresholds`/`masking_unmasked_hz` above, which stay
+    # the single source every existing reader (the curve builder, the
+    # reference-level derivation, the report) already uses for the MML values
+    # themselves — this only adds the trial-by-trial detail neither of those
+    # two fields was ever shaped to hold.
+    masking_trace = models.JSONField(default=list, blank=True)
+    masking_not_sure_count = models.IntegerField(null=True, blank=True)
+    # True when the patient chose "Repeat Assessment" and completed the
+    # masking-curve module again — a redo overwrites this module's own
+    # columns, like every other module here, without touching or deleting
+    # anything else.
+    masking_repeated = models.BooleanField(default=False)
     # The derived summary — see `services.masking.reference_level`.
     reference_level_db = models.FloatField(null=True, blank=True)
     reference_level_hz = models.FloatField(null=True, blank=True)
@@ -301,6 +412,17 @@ class Assessment(models.Model):
     pss4_score = models.IntegerField(null=True, blank=True)
     sleep_screen_score = models.IntegerField(null=True, blank=True)
     escalated_instruments = models.JSONField(default=list, blank=True)
+
+    # Per-instrument completion state for the "About Your Tinnitus" module
+    # (VAS, THI, GAD-7, PSS-10 — the four instruments that module actually
+    # administers). {"thi": "completed", "gad7": "skipped", ...}; a key absent
+    # from this dict means "not_started". Deliberately separate from whether a
+    # *score* is present: a skipped instrument must never be represented by a
+    # null score alone, because a null score is also what "not started" and
+    # "not yet asked" look like, and the three are different clinical facts
+    # (declined vs pending vs never offered). This is the only new state the
+    # skip feature needs — scores stay in the columns above and stay nullable.
+    questionnaire_status = models.JSONField(default=dict, blank=True)
 
     # -- derived composite metrics ------------------------------------------ #
     derived = models.JSONField(default=dict, blank=True)

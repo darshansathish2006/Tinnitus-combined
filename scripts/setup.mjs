@@ -80,7 +80,7 @@ Start both servers with:
 
   \x1b[1mnpm run dev\x1b[0m
 
-Then open \x1b[36mhttp://localhost:5173\x1b[0m and sign in as:
+Then open \x1b[36mhttp://localhost:3000\x1b[0m and sign in as:
 
   Clinician   dr.mehta@echosense.health
   Patient     priya.sundaram@example.com

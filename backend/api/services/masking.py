@@ -30,10 +30,14 @@ from typing import Any, Iterable, Mapping
 
 from clinical.audiometry import threshold_at
 
-# The audiometric set the masking module administers, in order. Frequencies are
-# the standard clinical series — the same ones the audiogram uses, so a masking
-# threshold and a hearing threshold at 4 kHz are directly comparable.
-MASKING_FREQUENCIES: list[int] = [250, 500, 1000, 2000, 3000, 4000, 6000, 8000]
+# The masker frequency sequence the masking-threshold module administers, in
+# order — the Feldmann masking-curve protocol. Historical records may carry
+# thresholds at other frequencies (250/500 Hz, from before this sequence
+# changed); those are never lost, since `curve()` below plots the union of
+# whatever was actually tested with this preset list, never just this list
+# alone — the same reason `masking_thresholds` has always been an open map
+# rather than a fixed-shape record.
+MASKING_FREQUENCIES: list[int] = [1000, 2000, 3000, 4000, 5000, 6000, 8000]
 
 # Above this, a masker is loud enough to be a problem in its own right: it
 # approaches the level at which sound-induced discomfort and further hearing

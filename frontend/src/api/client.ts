@@ -413,6 +413,8 @@ export interface PatientProfile {
   comorbidities: string[];
   medications: string[];
   etiology_notes: string | null;
+  /** The extended About You questionnaire (Sections 1–22 + snapshot), keyed by question id. */
+  about_you: Record<string, unknown>;
   consent_research: boolean;
   clinician_id: number | null;
   clinician_name: string | null;
@@ -440,6 +442,23 @@ export interface Assessment {
   pitch_match_ear: string | null;
   pitch_match_confidence: number | null;
   octave_confusion: boolean | null;
+  pitch_match_trace?: unknown[];
+  pitch_match_sound_description?: string;
+  pitch_match_sound_other_text?: string;
+  pitch_match_initial_level_db?: number | null;
+  pitch_match_comfort_level_db?: number | null;
+  pitch_match_not_sure_count?: number | null;
+  pitch_match_octave_frequency_hz?: number | null;
+  pitch_match_octave_response?: string;
+  pitch_match_confirmation?: string;
+  pitch_match_repeated?: boolean;
+  loudness_match_starting_level_db?: number | null;
+  loudness_match_trace?: unknown[];
+  loudness_match_confirmation?: string;
+  loudness_match_repeated?: boolean;
+  masking_trace?: unknown[];
+  masking_not_sure_count?: number | null;
+  masking_repeated?: boolean;
   loudness_match_db_sl: number | null;
   mml_db_sl: number | null;
   ri_depth_pct: number | null;
@@ -451,6 +470,10 @@ export interface Assessment {
   thi_score: number | null;
   thi_grade: string | null;
   thi_subscales: Record<string, unknown>;
+  /** Raw per-item THI responses ("thi7": 4, ...), 0/2/4 each. Used to break the
+   *  handicap score down by domain (sleep/concentration/daily activities) on
+   *  the plain results dashboard — see `FunctionalImpactCard`. */
+  thi_items?: Record<string, number> | null;
   vas_loudness: number | null;
   vas_annoyance: number | null;
   vas_awareness: number | null;
@@ -459,14 +482,21 @@ export interface Assessment {
   psqi_grade: string | null;
   pss10_score: number | null;
   pss10_grade: string | null;
+  pss10_items?: Record<string, number> | null;
   gad7_score: number | null;
   gad7_grade: string | null;
+  gad7_items?: Record<string, number> | null;
   phq2_score: number | null;
   /** Stepped-protocol short forms; long forms stay null unless escalated. */
   gad2_score: number | null;
   pss4_score: number | null;
   sleep_screen_score: number | null;
   escalated_instruments: string[];
+  /** Per-instrument status for the About Your Tinnitus module's skip feature —
+   *  {"thi": "completed", "gad7": "skipped", ...}. A key absent means
+   *  not_started. See `about_your_tinnitus` on the clinical report for the
+   *  fuller, availability-computed view the Results page reads from. */
+  questionnaire_status?: Record<string, "not_started" | "in_progress" | "completed" | "skipped">;
   derived: Record<string, any>;
   icd11_codes: any[];
 }

@@ -2,7 +2,7 @@
 
 Password for every account: `echosense2026`
 
-**Before you start:** `npm run dev`, open http://localhost:5173, have headphones plugged in.
+**Before you start:** `npm run dev`, open http://localhost:3000, have headphones plugged in.
 Have a second browser tab ready on the clinician account so you can switch without re-logging in.
 
 ---

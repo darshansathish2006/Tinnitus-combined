@@ -22,17 +22,63 @@ import { engine, type Ear as AudioEar } from "../../audio/engine";
 import {
   BANDWIDTH_OPTIONS,
   PitchMatcher,
-  RI_SAMPLE_TIMES,
+  ToleranceLevelFinder,
   analyseResidualInhibition,
   interpretLoudnessMatch,
   interpretMml,
   toSensationLevel,
   type PitchResult,
   type RiSample,
+  type ToleranceResponse,
+  type ToleranceTrial,
 } from "../../audio/procedures";
 import { RiCurve } from "../../components/charts";
 import { Chip, Fader, OptionGroup, Panel, Readout, StepRail, fmt } from "../../components/ui";
-import { IconCheck, IconPlay, IconStop } from "../../components/icons";
+import { IconPlay, IconStop } from "../../components/icons";
+
+/** The patient's structured immediate response, asked right after the masker
+ *  stops — the primary classification (never inferred from a numeric score
+ *  alone). */
+export type RiImmediateResponse = "COMPLETELY_ABSENT" | "REDUCED" | "NO_CHANGE" | "LOUDER";
+
+/** One monitoring check-in during the residual-inhibition window. */
+export interface RiMonitoringCheckpoint {
+  elapsed_s: number;
+  response: "still_reduced" | "returned_to_baseline";
+  at: number;
+}
+
+/**
+ * Residual-inhibition induction parameters. Frequency and level are not new
+ * clinical values: frequency is the existing pitch match, and level is the
+ * existing MML-plus-margin this component has always used to run the masker
+ * (see `startRi`, below) — the only change is naming them so the stimulus can
+ * be shown to the patient before it plays and stored explicitly per trial.
+ * No standardised monitoring cadence exists elsewhere in this codebase, so
+ * `RI_MONITORING_PROMPT_INTERVAL_S` is declared here as an explicit,
+ * configurable constant rather than an invented clinical parameter — see the
+ * implementation report.
+ */
+const RI_STIMULATION_DURATION_S = 45; // unchanged from the existing induction
+const RI_MONITORING_PROMPT_INTERVAL_S = 10; // not defined elsewhere in this repository — configurable
+
+/** Standard audiometric octave series already used for pure-tone audiometry
+ *  in this app (`CORE_SEQUENCE` in `assessment/Audiometry.tsx`), reused here
+ *  as the existing frequency-set convention for Sound Tolerance rather than
+ *  inventing a new one. */
+const ULL_FREQUENCIES = [250, 500, 1000, 2000, 4000, 8000];
+/** No standardised ULL/LDL starting level exists elsewhere in this
+ *  repository; this mirrors the ascending-search starting-level pattern
+ *  already established for Masking Threshold and Loudness Match in this
+ *  codebase, declared as an explicit, configurable constant. */
+const ULL_STARTING_DB = 50;
+
+export interface LdlFrequencyResult {
+  ear: "left" | "right";
+  frequency_hz: number;
+  trials: ToleranceTrial[];
+  ull_db: number | null;
+}
 
 export interface MatchResult {
   tinnitus_bandwidth: "tonal" | "narrowband" | "broadband";
@@ -45,8 +91,15 @@ export interface MatchResult {
   loudness_match_db_hl: number | null;
   loudness_match_db_sl: number | null;
   mml_db_sl: number | null;
+  /** Backward-compatible scalar LDL per ear (existing fields, unchanged
+   *  meaning) — the 1 kHz result from `ldl_trace`, the frequency the old
+   *  single-value measurement always represented. */
   ldl_left: number | null;
   ldl_right: number | null;
+  /** The complete multi-frequency, multi-ear Sound Tolerance trial history —
+   *  additive to `ldl_left`/`ldl_right` above. */
+  ldl_trace: LdlFrequencyResult[];
+  ldl_repeated: boolean;
   ri_depth_pct: number | null;
   ri_duration_s: number | null;
   ri_trace: RiSample[];
@@ -54,6 +107,20 @@ export interface MatchResult {
   ri_reported_category: "" | "none" | "partial" | "complete";
   /** Masker centre frequency, null when it was left at the tinnitus pitch. */
   mml_masker_hz: number | null;
+  /** The structured 4-way immediate response `ri_reported_category` above
+   *  cannot represent on its own (it has no "louder" option) — additive. */
+  ri_immediate_response: RiImmediateResponse | "";
+  ri_baseline_pct: number | null;
+  ri_post_stimulation_pct: number | null;
+  ri_monitoring: RiMonitoringCheckpoint[];
+  ri_stimulus_frequency_hz: number | null;
+  ri_stimulus_level_db: number | null;
+  ri_stimulation_duration_s: number | null;
+  ri_stimulation_started_at: number | null;
+  ri_stimulation_stopped_at: number | null;
+  ri_reduction_detected_at: number | null;
+  ri_return_to_baseline_at: number | null;
+  ri_repeated: boolean;
 }
 
 const SUBSTEP_KEYS = ["character", "pitch", "loudness", "limits", "ri"];
@@ -121,26 +188,39 @@ export default function TinnitusMatch({
    * mask a percept at a level several dB below what the on-pitch band needs.
    */
   const [mmlHzOverride, setMmlHzOverride] = useState<number | null>(null);
-  const [ldl, setLdl] = useState<{ left: number | null; right: number | null }>({ left: null, right: null });
-  const [ldlProbe, setLdlProbe] = useState(70);
-  const [ldlEar, setLdlEar] = useState<"left" | "right">("right");
 
-  const [riPhase, setRiPhase] = useState<"idle" | "masking" | "rating" | "done">("idle");
-  const [riIndex, setRiIndex] = useState(0);
+  /* -- sound tolerance / ULL-LDL ------------------------------------------ */
+  type LdlScreen = "select_ear" | "presenting" | "done";
+  const [ldl, setLdl] = useState<{ left: number | null; right: number | null }>({ left: null, right: null });
+  const [ldlScreen, setLdlScreen] = useState<LdlScreen>("select_ear");
+  const [ldlEarsToTest, setLdlEarsToTest] = useState<("left" | "right")[]>([]);
+  const [ldlEarIndex, setLdlEarIndex] = useState(0);
+  const [ldlFreqIndex, setLdlFreqIndex] = useState(0);
+  const [ldlResults, setLdlResults] = useState<LdlFrequencyResult[]>([]);
+  const [ldlLevel, setLdlLevel] = useState<number | null>(null);
+  const [ldlRepeated, setLdlRepeated] = useState(false);
+  const ldlFinder = useRef<ToleranceLevelFinder | null>(null);
+
+  /* -- residual inhibition ------------------------------------------------- */
+  const [riPhase, setRiPhase] = useState<
+    "idle" | "setup" | "masking" | "immediate" | "reduction" | "monitoring" | "done"
+  >("idle");
   const [riTrace, setRiTrace] = useState<RiSample[]>([]);
-  const [riCurrent, setRiCurrent] = useState(100);
   /**
-   * What the patient says happened, as three categories.
-   *
-   * Kept entirely separate from the 0-100% trace and from the graded
-   * `ri_category` the server derives from it. The trace measures how loud the
-   * tinnitus was at nine time points; this records the answer to "has it gone
-   * down?" — and the two can legitimately disagree. A patient who reports
-   * complete abolition while the trace shows a 30% dip is telling you something
-   * about how they experience the percept that the numbers do not, and
-   * collapsing the two into one value would throw that away.
+   * The patient's structured 4-way response. `ri_reported_category` (the
+   * existing 3-way field) is derived from this at submission time — see
+   * `finish()` — since it can additionally represent "louder", something the
+   * older 3-way value cannot.
    */
-  const [riReported, setRiReported] = useState<"none" | "partial" | "complete" | null>(null);
+  const [riImmediateResponse, setRiImmediateResponse] = useState<RiImmediateResponse | null>(null);
+  const [riImmediateAt, setRiImmediateAt] = useState<number | null>(null);
+  const [riPostStimPct, setRiPostStimPct] = useState(100);
+  const [riMonitoring, setRiMonitoring] = useState<RiMonitoringCheckpoint[]>([]);
+  const [riStimStartedAt, setRiStimStartedAt] = useState<number | null>(null);
+  const [riStimStoppedAt, setRiStimStoppedAt] = useState<number | null>(null);
+  const [riReturnedAt, setRiReturnedAt] = useState<number | null>(null);
+  const [riElapsedSinceStop, setRiElapsedSinceStop] = useState(0);
+  const [riRepeated, setRiRepeated] = useState(false);
   const [maskCountdown, setMaskCountdown] = useState(0);
 
   const handleRef = useRef<{ stop(f?: number): void; setLevelDb(db: number, r?: number): void } | null>(null);
@@ -236,25 +316,50 @@ export default function TinnitusMatch({
     setPitchPhase("bracketing");
   }
 
-  /* -- residual inhibition ------------------------------------------------ */
+  /* -- residual inhibition ------------------------------------------------- */
+  /** Stimulus level: the same MML-plus-margin this component has always used
+   *  to induce RI (see the historical "Masker 10 dB above the MML" comment,
+   *  now a named constant), never re-derived independently of the MML the
+   *  patient just gave. */
+  const riLevelDb = mmlDbHl + 10;
+
+  /** Screen 2 — a brief preview at the induction parameters, not the
+   *  45 s induction itself. */
+  async function playRiPreview() {
+    if (!pitchHz) return;
+    await engine.resume();
+    stopSound();
+    engine.playTone({ freq: pitchHz, dbHL: riLevelDb, ear: matchEar, durationMs: 1500, rampMs: 30 });
+  }
+
+  function beginRiSetup() {
+    setRiPhase("setup");
+  }
+
   async function startRi() {
     if (!pitchHz) return;
     await engine.resume();
+    stopSound();
     setRiPhase("masking");
-    setRiTrace([]);
-    setRiIndex(0);
+    setRiTrace([{ t: 0, loudness_pct: 100 }]);
+    setRiMonitoring([]);
+    setRiImmediateResponse(null);
+    setRiReturnedAt(null);
+    const startedAt = Date.now();
+    setRiStimStartedAt(startedAt);
 
-    // Masker 10 dB above the MML for 45 s — the standard RI induction.
+    // Masker at `riLevelDb` for `RI_STIMULATION_DURATION_S` — the existing RI
+    // induction this component has always used, unchanged.
     const handle = engine.playBandNoise({
       centreHz: pitchHz,
       bandwidthOctaves: 0.5,
-      dbfs: engine.hlToDbfs(mmlDbHl + 10, pitchHz),
+      dbfs: engine.hlToDbfs(riLevelDb, pitchHz),
       ear: matchEar,
       fadeInS: 1,
     });
     handleRef.current = handle;
 
-    let remaining = 45;
+    let remaining = RI_STIMULATION_DURATION_S;
     setMaskCountdown(remaining);
     const tick = window.setInterval(() => {
       remaining -= 1;
@@ -266,27 +371,190 @@ export default function TinnitusMatch({
       handle.stop(0.3);
       handleRef.current = null;
       window.clearInterval(tick);
-      setRiPhase("rating");
-      setRiCurrent(100);
-    }, 45_000);
+      setRiStimStoppedAt(Date.now());
+      setRiPhase("immediate");
+    }, RI_STIMULATION_DURATION_S * 1000);
     timers.current.push(stopTimer as unknown as number);
   }
 
-  function recordRiSample() {
-    const sample = { t: RI_SAMPLE_TIMES[riIndex], loudness_pct: riCurrent };
-    const next = [...riTrace, sample];
-    setRiTrace(next);
-    if (riIndex + 1 >= RI_SAMPLE_TIMES.length) setRiPhase("done");
-    else setRiIndex(riIndex + 1);
+  /** Screen 4 — the primary, explicit classification. Never inferred from a
+   *  numeric score: the patient's own answer decides which branch runs next. */
+  function recordImmediateResponse(response: RiImmediateResponse) {
+    const at = Date.now();
+    setRiImmediateResponse(response);
+    setRiImmediateAt(at);
+    if (response === "COMPLETELY_ABSENT" || response === "REDUCED") {
+      setRiPostStimPct(response === "COMPLETELY_ABSENT" ? 0 : 50);
+      setRiPhase("reduction");
+    } else {
+      // NO_CHANGE / LOUDER — no reduction to measure, no RI duration timer.
+      // `riTrace` keeps only its baseline point, so `analyseResidualInhibition`
+      // never runs and no depth/duration is fabricated for either outcome.
+      setRiPhase("done");
+    }
+  }
+
+  /** Screen 5 — confirms the degree of remaining tinnitus, then the elapsed
+   *  time since the stimulus stopped becomes the second, real point on the
+   *  existing recovery-curve trace (`ri_trace`) — not a fixed sample grid,
+   *  but not fabricated either. */
+  function confirmReduction() {
+    const stoppedAt = riStimStoppedAt ?? Date.now();
+    const elapsed = Math.max(0, (Date.now() - stoppedAt) / 1000);
+    setRiTrace((prev) => [...prev, { t: Math.round(elapsed * 10) / 10, loudness_pct: riPostStimPct }]);
+    setRiElapsedSinceStop(0);
+    setRiPhase("monitoring");
+  }
+
+  /** Screen 6 — patient-paced: "No, back to usual" and "End" are answerable
+   *  the instant the patient notices either, rather than gated behind a
+   *  countdown (delaying detection would bias the duration measurement).
+   *  `RI_MONITORING_PROMPT_INTERVAL_S` still governs the passive, automatic
+   *  "still reduced" checkpoints logged while nothing has been clicked. */
+  useEffect(() => {
+    if (riPhase !== "monitoring" || !riStimStoppedAt) return;
+    const tick = window.setInterval(() => {
+      setRiElapsedSinceStop(Math.round((Date.now() - riStimStoppedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(tick);
+  }, [riPhase, riStimStoppedAt]);
+
+  useEffect(() => {
+    if (riPhase !== "monitoring" || !riStimStoppedAt) return;
+    const auto = window.setInterval(() => {
+      const elapsed = Math.round((Date.now() - riStimStoppedAt) / 1000);
+      setRiMonitoring((prev) => [...prev, { elapsed_s: elapsed, response: "still_reduced", at: Date.now() }]);
+    }, RI_MONITORING_PROMPT_INTERVAL_S * 1000);
+    return () => window.clearInterval(auto);
+  }, [riPhase, riStimStoppedAt]);
+
+  function reportStillReduced() {
+    if (!riStimStoppedAt) return;
+    const elapsed = Math.round((Date.now() - riStimStoppedAt) / 1000);
+    setRiMonitoring((prev) => [...prev, { elapsed_s: elapsed, response: "still_reduced", at: Date.now() }]);
+  }
+
+  function reportReturnedToBaseline() {
+    if (!riStimStoppedAt) return;
+    const at = Date.now();
+    const elapsed = Math.round((at - riStimStoppedAt) / 1000);
+    setRiMonitoring((prev) => [...prev, { elapsed_s: elapsed, response: "returned_to_baseline", at }]);
+    setRiReturnedAt(at);
+    setRiTrace((prev) => [...prev, { t: elapsed, loudness_pct: 100 }]);
+    setRiPhase("done");
+  }
+
+  /** [End] — the patient stops monitoring without confirming a return. The
+   *  last real reading stands; duration is reported as "at least" that long,
+   *  the same fallback `analyseResidualInhibition` already uses when a trace
+   *  never recovers to 90% of baseline. */
+  function endMonitoring() {
+    setRiPhase("done");
+  }
+
+  /** Runs the induction again, preserving the completed run's data (marked
+   *  `ri_repeated`) rather than discarding it — the same convention used for
+   *  every other repeatable module in this battery. */
+  function repeatRi() {
+    setRiTrace([]);
+    setRiMonitoring([]);
+    setRiImmediateResponse(null);
+    setRiImmediateAt(null);
+    setRiPostStimPct(100);
+    setRiStimStartedAt(null);
+    setRiStimStoppedAt(null);
+    setRiReturnedAt(null);
+    setRiRepeated(true);
+    setRiPhase("idle");
   }
 
   const riAnalysis = riTrace.length >= 2 ? analyseResidualInhibition(riTrace) : null;
+
+  /* -- sound tolerance / ULL-LDL ------------------------------------------- */
+  function chooseLdlEars(choice: "left" | "right" | "both") {
+    const ears: ("left" | "right")[] = choice === "both" ? ["right", "left"] : [choice];
+    setLdlEarsToTest(ears);
+    setLdlEarIndex(0);
+    setLdlFreqIndex(0);
+    beginLdlFrequency(0);
+  }
+
+  function beginLdlFrequency(freqIndex: number) {
+    // A fresh ear starts from the configured starting level; within an ear,
+    // each subsequent frequency starts from the previous one's result (the
+    // same "seed from the last finding" pattern `MaskingLevelFinder` uses),
+    // never inventing a value when that previous result was never obtained.
+    const previous = freqIndex > 0 ? ldlResults[ldlResults.length - 1] : undefined;
+    const start = previous?.ull_db ?? ULL_STARTING_DB;
+    const hz = ULL_FREQUENCIES[freqIndex];
+    ldlFinder.current = new ToleranceLevelFinder(start, Math.min(90, Math.round(engine.maxReachableHl(hz))));
+    setLdlLevel(ldlFinder.current.currentLevel);
+    setLdlScreen("presenting");
+  }
+
+  async function playLdlTone(ear: "left" | "right", hz: number, dbHL: number) {
+    await engine.resume();
+    stopSound();
+    engine.playTone({ freq: hz, dbHL, ear, durationMs: 1500, rampMs: 40 });
+  }
+
+  function respondLdl(ear: "left" | "right", hz: number, response: ToleranceResponse) {
+    if (!ldlFinder.current) return;
+    ldlFinder.current.respond(response);
+    if (ldlFinder.current.done) {
+      const result: LdlFrequencyResult = {
+        ear,
+        frequency_hz: hz,
+        trials: ldlFinder.current.trace,
+        ull_db: ldlFinder.current.result(),
+      };
+      setLdlResults((prev) => [...prev, result]);
+      if (result.ull_db !== null) setLdl((prev) => ({ ...prev, [ear]: prev[ear] ?? result.ull_db }));
+      if (hz === 1000) setLdl((prev) => ({ ...prev, [ear]: result.ull_db }));
+
+      const nextFreqIndex = ldlFreqIndex + 1;
+      if (nextFreqIndex < ULL_FREQUENCIES.length) {
+        setLdlFreqIndex(nextFreqIndex);
+        beginLdlFrequency(nextFreqIndex);
+      } else {
+        const nextEarIndex = ldlEarIndex + 1;
+        if (nextEarIndex < ldlEarsToTest.length) {
+          setLdlEarIndex(nextEarIndex);
+          setLdlFreqIndex(0);
+          beginLdlFrequency(0);
+        } else {
+          setLdlScreen("done");
+        }
+      }
+    } else {
+      setLdlLevel(ldlFinder.current.currentLevel);
+    }
+  }
+
+  function repeatLdl() {
+    setLdlResults([]);
+    setLdl({ left: null, right: null });
+    setLdlRepeated(true);
+    setLdlScreen("select_ear");
+  }
 
   /* -- completion --------------------------------------------------------- */
   function finish() {
     stopSound();
     engine.stopAll(0.2);
     const analysis = riTrace.length >= 2 ? analyseResidualInhibition(riTrace) : null;
+    // Backward-compatible 3-way category, derived from the structured 4-way
+    // response — LOUDER has no equivalent in the old vocabulary, so it is
+    // reported as "none" (no *reduction* was reported), while the fuller
+    // truth still lives in `ri_immediate_response`.
+    const reportedCategory: "" | "none" | "partial" | "complete" =
+      riImmediateResponse === "COMPLETELY_ABSENT"
+        ? "complete"
+        : riImmediateResponse === "REDUCED"
+          ? "partial"
+          : riImmediateResponse === "NO_CHANGE" || riImmediateResponse === "LOUDER"
+            ? "none"
+            : "";
     onComplete({
       tinnitus_bandwidth: bandwidth,
       character: character ?? "",
@@ -300,14 +568,31 @@ export default function TinnitusMatch({
       mml_db_sl: pitchHz ? toSensationLevel(mmlDbHl, mmlThresholdDbHl ?? thresholdDbHl) : null,
       ldl_left: ldl.left,
       ldl_right: ldl.right,
+      ldl_trace: ldlResults,
+      ldl_repeated: ldlRepeated,
       ri_depth_pct: analysis?.depthPct ?? null,
       ri_duration_s: analysis?.durationS ?? null,
       ri_trace: riTrace,
-      ri_reported_category: riReported ?? "",
+      ri_reported_category: reportedCategory,
       // Null unless the clinician actually moved the band off the pitch, so an
       // untouched run is recorded as having been measured at the tinnitus
       // frequency rather than being given a redundant explicit value.
       mml_masker_hz: mmlHzOverride,
+      ri_immediate_response: riImmediateResponse ?? "",
+      ri_baseline_pct: riTrace.length ? 100 : null,
+      ri_post_stimulation_pct: riImmediateResponse === "COMPLETELY_ABSENT" || riImmediateResponse === "REDUCED"
+        ? riPostStimPct
+        : null,
+      ri_monitoring: riMonitoring,
+      ri_stimulus_frequency_hz: riStimStartedAt ? pitchHz : null,
+      ri_stimulus_level_db: riStimStartedAt ? riLevelDb : null,
+      ri_stimulation_duration_s: riStimStartedAt ? RI_STIMULATION_DURATION_S : null,
+      ri_stimulation_started_at: riStimStartedAt,
+      ri_stimulation_stopped_at: riStimStoppedAt,
+      ri_reduction_detected_at:
+        riImmediateResponse === "COMPLETELY_ABSENT" || riImmediateResponse === "REDUCED" ? riImmediateAt : null,
+      ri_return_to_baseline_at: riReturnedAt,
+      ri_repeated: riRepeated,
     });
   }
 
@@ -667,86 +952,146 @@ export default function TinnitusMatch({
       {step === 3 && (
         <div className="stack stack-5">
           <Panel title={t("match.ldlTitle")} bracketed>
-            <div className="grid grid-sidebar" style={{ ["--aside" as string]: "260px" }}>
-              <div className="stack stack-4">
-                <p style={{ fontSize: "var(--fs-small)", maxWidth: "44em" }}>
-                  <Trans i18nKey="match.ldlLead" components={[<strong key="0" />]} />
-                </p>
+            <div className="stack stack-4">
+              <p style={{ fontSize: "var(--fs-small)", maxWidth: "44em" }}>
+                <Trans i18nKey="match.ldlLead" components={[<strong key="0" />]} />
+              </p>
 
-                <div className="btn-group">
-                  {(["right", "left"] as const).map((ear) => (
-                    <button
-                      key={ear}
-                      type="button"
-                      className="btn btn--sm"
-                      aria-pressed={ldlEar === ear}
-                      onClick={() => setLdlEar(ear)}
-                    >
-                      {t(ear === "left" ? "match.leftEar" : "match.rightEar")}
+              {ldlScreen === "select_ear" && (
+                <div className="stack stack-3">
+                  <span className="label">{t("match.ldlChooseEar", { defaultValue: "Which ear should we test first?" })}</span>
+                  <div className="btn-group">
+                    {(["right", "left", "both"] as const).map((choice) => (
+                      <button key={choice} type="button" className="btn" onClick={() => chooseLdlEars(choice)}>
+                        {choice === "both"
+                          ? t("match.bothEars", { defaultValue: "Both ears" })
+                          : t(choice === "left" ? "match.leftEar" : "match.rightEar")}
+                      </button>
+                    ))}
+                  </div>
+                  {ldlResults.length > 0 && (
+                    <p className="meta dim">
+                      {t("match.ldlRepeatNote", {
+                        defaultValue: "Starting a new sound tolerance measurement. Your previous results stay in your record.",
+                      })}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {ldlScreen === "presenting" &&
+                (() => {
+                  const ear = ldlEarsToTest[ldlEarIndex];
+                  const hz = ULL_FREQUENCIES[ldlFreqIndex];
+                  const lastTrial = ldlFinder.current?.trace[ldlFinder.current.trace.length - 1];
+                  const isConfirmation = Boolean(lastTrial && lastTrial.response === "uncomfortable" && !lastTrial.confirmation);
+                  return (
+                    <div className="stack stack-4">
+                      <div className="row row--between">
+                        <Chip tone="ghost">{t(ear === "left" ? "match.leftEar" : "match.rightEar")}</Chip>
+                        <Chip tone="ghost">
+                          {t("common.of", { current: ldlFreqIndex + 1, total: ULL_FREQUENCIES.length })}
+                        </Chip>
+                      </div>
+                      <p className="meta">
+                        {hz} Hz · {ldlLevel} dB HL
+                      </p>
+                      {isConfirmation && (
+                        <Panel tone="sunken" tight>
+                          <p className="meta">
+                            {t("match.ldlConfirm", { defaultValue: "Was that previous sound uncomfortably loud?" })}
+                          </p>
+                        </Panel>
+                      )}
+                      <div className="row">
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => ldlLevel !== null && playLdlTone(ear, hz, ldlLevel)}
+                        >
+                          <IconPlay size={15} />
+                          {t("match.playSound", { defaultValue: "Play sound" })}
+                        </button>
+                      </div>
+                      <div className="row row--tight row--wrap">
+                        <button
+                          type="button"
+                          className="btn btn--primary"
+                          onClick={() => respondLdl(ear, hz, "comfortable")}
+                        >
+                          {t("match.comfortable", { defaultValue: "Comfortable" })}
+                        </button>
+                        <button type="button" className="btn" onClick={() => respondLdl(ear, hz, "uncomfortable")}>
+                          {t("match.uncomfortablyLoud")}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn--ghost"
+                          onClick={() => respondLdl(ear, hz, "stop")}
+                        >
+                          <IconStop size={15} />
+                          {t("match.stopTooLoud", { defaultValue: "Stop / too loud" })}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+              {ldlScreen === "done" && (
+                <div className="stack stack-3">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>{t("match.ear", { defaultValue: "Ear" })}</th>
+                        <th>{t("match.frequency", { defaultValue: "Frequency" })}</th>
+                        <th>{t("match.ullLdl", { defaultValue: "ULL / LDL" })}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ldlResults.map((r, i) => (
+                        <tr key={i}>
+                          <td>{t(r.ear === "left" ? "match.leftEar" : "match.rightEar")}</td>
+                          <td>{r.frequency_hz} Hz</td>
+                          <td>
+                            {r.ull_db !== null
+                              ? `${r.ull_db} dB HL`
+                              : t("match.notObtained", { defaultValue: "Not obtained" })}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  <div className="row" style={{ gap: "var(--s8)" }}>
+                    <Readout
+                      label={t("match.ldlRight")}
+                      value={ldl.right ?? "—"}
+                      unit="dB HL"
+                      size="sm"
+                      tone={ldl.right !== null && ldl.right < 80 ? "warn" : undefined}
+                    />
+                    <Readout
+                      label={t("match.ldlLeft")}
+                      value={ldl.left ?? "—"}
+                      unit="dB HL"
+                      size="sm"
+                      tone={ldl.left !== null && ldl.left < 80 ? "warn" : undefined}
+                    />
+                  </div>
+                  {(ldl.left !== null && ldl.left < 80) || (ldl.right !== null && ldl.right < 80) ? (
+                    <Panel tone="warn" tight>
+                      <p className="meta">{t("match.ldlReduced")}</p>
+                    </Panel>
+                  ) : (
+                    <p className="meta dim">{t("match.ldlOptional")}</p>
+                  )}
+                  <div className="row">
+                    <button type="button" className="btn btn--sm btn--ghost" onClick={repeatLdl}>
+                      {t("match.repeatLdl", { defaultValue: "Repeat sound tolerance" })}
                     </button>
-                  ))}
+                  </div>
                 </div>
-
-                <Fader
-                  label={t("match.levelForEar", {
-                    ear: t(ldlEar === "left" ? "match.leftEar" : "match.rightEar"),
-                  })}
-                  value={ldlProbe}
-                  min={40}
-                  max={Math.min(100, engine.maxReachableHl(1000))}
-                  step={5}
-                  unit="dB HL"
-                  onChange={setLdlProbe}
-                  tone="data"
-                  lowLabel="40"
-                  highLabel="100"
-                />
-
-                <div className="row">
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={async () => {
-                      await engine.resume();
-                      engine.playTone({ freq: 1000, dbHL: ldlProbe, ear: ldlEar, durationMs: 1200, rampMs: 40 });
-                    }}
-                  >
-                    <IconPlay size={15} />
-                    {t("match.play1k")}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn--primary"
-                    onClick={() => setLdl((prev) => ({ ...prev, [ldlEar]: ldlProbe }))}
-                  >
-                    {t("match.uncomfortablyLoud")}
-                  </button>
-                </div>
-              </div>
-
-              <div className="stack stack-3">
-                <Readout
-                  label={t("match.ldlRight")}
-                  value={ldl.right ?? "—"}
-                  unit="dB HL"
-                  size="sm"
-                  tone={ldl.right !== null && ldl.right < 80 ? "warn" : undefined}
-                />
-                <Readout
-                  label={t("match.ldlLeft")}
-                  value={ldl.left ?? "—"}
-                  unit="dB HL"
-                  size="sm"
-                  tone={ldl.left !== null && ldl.left < 80 ? "warn" : undefined}
-                />
-                {(ldl.left !== null && ldl.left < 80) || (ldl.right !== null && ldl.right < 80) ? (
-                  <Panel tone="warn" tight>
-                    <p className="meta">{t("match.ldlReduced")}</p>
-                  </Panel>
-                ) : (
-                  <p className="meta dim">{t("match.ldlOptional")}</p>
-                )}
-              </div>
+              )}
             </div>
           </Panel>
 
@@ -880,10 +1225,36 @@ export default function TinnitusMatch({
                     <Panel tone="sunken" tight>
                       <p className="meta">{t("match.riWhy")}</p>
                     </Panel>
-                    <button type="button" className="btn btn--primary btn--lg" onClick={startRi}>
-                      {t("match.startRi")}
+                    <button type="button" className="btn btn--primary btn--lg" onClick={beginRiSetup}>
+                      {t("match.riContinue", { defaultValue: "Continue" })}
                     </button>
                   </>
+                )}
+
+                {riPhase === "setup" && (
+                  <div className="stack stack-4">
+                    <div className="row row--tight row--wrap">
+                      <Chip tone="ghost">{pitchHz} Hz</Chip>
+                      <Chip tone="ghost">{riLevelDb.toFixed(0)} dB HL</Chip>
+                      <Chip tone="ghost">
+                        {t("match.riDurationChip", { seconds: RI_STIMULATION_DURATION_S, defaultValue: "{{seconds}} s" })}
+                      </Chip>
+                    </div>
+                    <p className="meta">
+                      {t("match.riSetupNote", {
+                        defaultValue: "The level and duration are fixed by your earlier measurements — there is nothing to adjust here.",
+                      })}
+                    </p>
+                    <div className="row">
+                      <button type="button" className="btn" onClick={playRiPreview}>
+                        <IconPlay size={15} />
+                        {t("match.playTestSound", { defaultValue: "Play test sound" })}
+                      </button>
+                      <button type="button" className="btn btn--primary" onClick={startRi}>
+                        {t("match.startRi")}
+                      </button>
+                    </div>
+                  </div>
                 )}
 
                 {riPhase === "masking" && (
@@ -913,67 +1284,111 @@ export default function TinnitusMatch({
                   </div>
                 )}
 
-                {riPhase === "rating" && (
-                  <div className="stack stack-5">
-                    <div className="row row--between">
-                      <span className="label label--signal">{t("match.rateNow")}</span>
-                      <Chip tone="ghost">
-                        {t("common.of", { current: riIndex + 1, total: RI_SAMPLE_TIMES.length })}
-                      </Chip>
+                {riPhase === "immediate" && (
+                  <div className="stack stack-4">
+                    <span className="label label--signal">
+                      {t("match.riImmediateQuestion", { defaultValue: "How does your tinnitus sound right now?" })}
+                    </span>
+                    <div className="grid" style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "var(--s2)" }}>
+                      {(
+                        [
+                          ["COMPLETELY_ABSENT", "match.riImmediate.completelyAbsent", "My tinnitus is completely gone"],
+                          ["REDUCED", "match.riImmediate.reduced", "It's quieter than usual"],
+                          ["NO_CHANGE", "match.riImmediate.noChange", "No change"],
+                          ["LOUDER", "match.riImmediate.louder", "It's louder than usual"],
+                        ] as const
+                      ).map(([value, key, defaultValue]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          className="option"
+                          onClick={() => recordImmediateResponse(value)}
+                        >
+                          {t(key, { defaultValue })}
+                        </button>
+                      ))}
                     </div>
+                  </div>
+                )}
 
-                    <Readout
-                      label={t("match.atSeconds", { seconds: RI_SAMPLE_TIMES[riIndex] })}
-                      value={riCurrent}
-                      unit={t("match.percentOfNormal")}
-                      size="lg"
-                      tone={riCurrent < 60 ? "ok" : riCurrent > 105 ? "crit" : "data"}
+                {riPhase === "reduction" && (
+                  <div className="stack stack-4">
+                    <span className="label">
+                      {t("match.riReductionQuestion", {
+                        defaultValue: "How much of your tinnitus loudness remains, compared with before the masker?",
+                      })}
+                    </span>
+                    <OptionGroup<number>
+                      columns={5}
+                      value={riPostStimPct}
+                      onChange={setRiPostStimPct}
+                      options={[0, 25, 50, 75, 100].map((pct) => ({ value: pct, label: `${pct}%` }))}
                     />
+                    <p className="meta">
+                      {t("match.riReductionNote", {
+                        defaultValue: "0% = completely suppressed. 100% = no reduction at all.",
+                      })}
+                    </p>
+                    <div className="row row--end">
+                      <button type="button" className="btn btn--primary btn--lg" onClick={confirmReduction}>
+                        {t("match.riConfirmReduction", { defaultValue: "Confirm" })}
+                      </button>
+                    </div>
+                  </div>
+                )}
 
-                    <Fader
-                      label={t("match.compareLoudness")}
-                      value={riCurrent}
-                      min={0}
-                      max={120}
-                      step={5}
-                      onChange={setRiCurrent}
-                      lowLabel={t("match.riLow")}
-                      highLabel={t("match.riHigh")}
+                {riPhase === "monitoring" && (
+                  <div className="center stack stack-4" style={{ paddingBlock: "var(--s6)" }}>
+                    <Readout
+                      label={t("match.riElapsed", { defaultValue: "Time since the masker stopped" })}
+                      value={riElapsedSinceStop}
+                      unit="s"
+                      size="lg"
                       tone="data"
                     />
-
-                    <button type="button" className="btn btn--primary btn--lg" onClick={recordRiSample}>
-                      {t("match.recordRating")}
+                    <span className="label">
+                      {t("match.riMonitoringQuestion", { defaultValue: "Can you still notice a reduction?" })}
+                    </span>
+                    <div className="row">
+                      <button type="button" className="btn btn--primary" onClick={reportStillReduced}>
+                        {t("match.riYesStillReduced", { defaultValue: "Yes, still reduced" })}
+                      </button>
+                      <button type="button" className="btn" onClick={reportReturnedToBaseline}>
+                        {t("match.riNoBackToUsual", { defaultValue: "No — back to usual" })}
+                      </button>
+                    </div>
+                    <button type="button" className="btn btn--sm btn--ghost" onClick={endMonitoring}>
+                      {t("match.riEnd", { defaultValue: "End" })}
                     </button>
+                  </div>
+                )}
+
+                {riPhase === "done" && (riImmediateResponse === "NO_CHANGE" || riImmediateResponse === "LOUDER") && (
+                  <div className="stack stack-4">
+                    <Chip tone={riImmediateResponse === "LOUDER" ? "crit" : "warn"} dot>
+                      {t(
+                        riImmediateResponse === "LOUDER" ? "match.riImmediate.louder" : "match.riImmediate.noChange",
+                        { defaultValue: riImmediateResponse === "LOUDER" ? "It's louder than usual" : "No change" }
+                      )}
+                    </Chip>
+                    <p className="meta">
+                      {t("match.riNoReductionNote", {
+                        defaultValue: "No reduction was reported, so no recovery duration is measured for this run.",
+                      })}
+                    </p>
+                    <div className="row row--end">
+                      <button type="button" className="btn btn--sm btn--ghost" onClick={repeatRi}>
+                        {t("match.repeatRi", { defaultValue: "Repeat residual inhibition" })}
+                      </button>
+                      <button type="button" className="btn btn--primary btn--lg" onClick={finish}>
+                        {t("match.finishCharacterisation")}
+                      </button>
+                    </div>
                   </div>
                 )}
 
                 {riPhase === "done" && riAnalysis && (
                   <div className="stack stack-4">
-                    {/* The patient's own answer, asked once the trace is in so
-                        it is a summary of what they experienced rather than a
-                        prediction that then biases the ratings. */}
-                    <Panel tone="sunken" tight>
-                      <div className="stack stack-3">
-                        <span className="label">{t("match.riReportedQuestion")}</span>
-                        <div className="row row--tight row--wrap">
-                          {(["none", "partial", "complete"] as const).map((key) => (
-                            <button
-                              key={key}
-                              type="button"
-                              className={`btn btn--sm${riReported === key ? " btn--primary" : ""}`}
-                              aria-pressed={riReported === key}
-                              onClick={() => setRiReported(key)}
-                            >
-                              {riReported === key && <IconCheck size={13} />}
-                              {t(`match.riReported.${key}`)}
-                            </button>
-                          ))}
-                        </div>
-                        <p className="meta">{t("match.riReportedNote")}</p>
-                      </div>
-                    </Panel>
-
                     <div className="row" style={{ gap: "var(--s8)" }}>
                       <Readout
                         label={t("match.depth")}
@@ -1007,7 +1422,17 @@ export default function TinnitusMatch({
                     <p style={{ fontSize: "var(--fs-small)" }}>
                       {riAnalysis.noteKey ? t(riAnalysis.noteKey) : ""}
                     </p>
+                    {!riReturnedAt && (
+                      <p className="meta dim">
+                        {t("match.riNoReturnConfirmed", {
+                          defaultValue: "Monitoring was ended before a return to baseline was confirmed — duration is a lower bound.",
+                        })}
+                      </p>
+                    )}
                     <div className="row row--end">
+                      <button type="button" className="btn btn--sm btn--ghost" onClick={repeatRi}>
+                        {t("match.repeatRi", { defaultValue: "Repeat residual inhibition" })}
+                      </button>
                       <button type="button" className="btn btn--primary btn--lg" onClick={finish}>
                         {t("match.finishCharacterisation")}
                       </button>

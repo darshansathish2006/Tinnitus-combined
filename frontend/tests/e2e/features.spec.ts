@@ -184,7 +184,7 @@ test.describe("clinician assignment", () => {
   async function freshPatient(request: APIRequestContext) {
     const email = `fresh.${Date.now()}@example.com`;
     const password = "freshpass2026";
-    const response = await request.post("http://127.0.0.1:8000/api/auth/register", {
+    const response = await request.post("http://127.0.0.1:9000/api/auth/register", {
       data: { email, password, full_name: "Fresh Patient", role: "patient" },
     });
     expect(response.ok()).toBe(true);
@@ -196,7 +196,7 @@ test.describe("clinician assignment", () => {
     const account = await freshPatient(request);
 
     // The registration response itself proves the auto-assignment is gone.
-    const me = await request.get("http://127.0.0.1:8000/api/consultation", {
+    const me = await request.get("http://127.0.0.1:9000/api/consultation", {
       headers: { Authorization: `Bearer ${account.body.access_token}` },
     });
     expect((await me.json()).clinician.assigned).toBe(false);
@@ -236,7 +236,7 @@ test.describe("clinician assignment", () => {
     await expect(page.getByRole("heading", { name: "Choose your doctor" })).toHaveCount(0);
 
     // And it stuck server-side, not just in component state.
-    const after = await request.get("http://127.0.0.1:8000/api/consultation", {
+    const after = await request.get("http://127.0.0.1:9000/api/consultation", {
       headers: { Authorization: `Bearer ${account.body.access_token}` },
     });
     expect((await after.json()).clinician.assigned).toBe(true);

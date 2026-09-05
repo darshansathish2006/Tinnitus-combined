@@ -18,9 +18,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  *
  * Kept in step with the Vite proxy: set `VITE_API_TARGET` in
  * `frontend/.env.local` and `ECHOSENSE_API_PORT` here, or leave both unset and
- * everything runs on 8000 as before.
+ * everything runs on 9000 as before.
  */
-const API_PORT = (process.env.ECHOSENSE_API_PORT || "8000").trim();
+const API_PORT = (process.env.ECHOSENSE_API_PORT || "9000").trim();
 const backend = join(root, "backend");
 const frontend = join(root, "frontend");
 const isWindows = process.platform === "win32";
@@ -85,7 +85,7 @@ process.on("SIGTERM", () => shutdown(0));
 
 console.log("\x1b[1mEchoSense AI — development\x1b[0m");
 console.log(`  API  http://127.0.0.1:${API_PORT}/api/health   (Django + DRF)`);
-console.log("  Web  http://localhost:5173\n");
+console.log("  Web  http://localhost:3000\n");
 
 const viteJs = join(frontend, "node_modules", "vite", "bin", "vite.js");
 

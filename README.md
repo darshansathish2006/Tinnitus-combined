@@ -13,10 +13,10 @@ whose delivered spectrum is verified before it reaches the patient.
 
 ```bash
 npm run setup     # venv, dependencies, train models, seed demo cohort (~4 min)
-npm run dev       # API on :8000, web app on :5173
+npm run dev       # API on :9000, web app on :3000
 ```
 
-Open **http://localhost:5173**. Password for every seeded account is `echosense2026`.
+Open **http://localhost:3000**. Password for every seeded account is `echosense2026`.
 
 | Sign in as | Account | What to look at |
 | --- | --- | --- |
@@ -35,7 +35,7 @@ npm run seed      # migrate + rebuild the demo cohort
 npm run build     # production frontend build
 ```
 
-The API is at **http://127.0.0.1:8000/api/health**. Any Django command is available via
+The API is at **http://127.0.0.1:9000/api/health**. Any Django command is available via
 `npm run manage -- <command>` (e.g. `npm run manage -- createsuperuser`).
 
 ---

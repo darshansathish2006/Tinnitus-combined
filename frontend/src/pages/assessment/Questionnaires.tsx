@@ -50,30 +50,30 @@ import { IconCheck, IconInfo } from "../../components/icons";
  *    idiom a Tamil or Hindi speaker would actually use for that symptom, since a
  *    word-by-word rendering changes what is being screened for.
  */
-function itemText(t: TFunction, item: Item): string {
+export function itemText(t: TFunction, item: Item): string {
   return t(`instruments.items.${item.id}`, { defaultValue: item.prompt ?? item.text });
 }
 
-function optionLabel(t: TFunction, label: string): string {
+export function optionLabel(t: TFunction, label: string): string {
   return t(`instruments.options.${label}`, { defaultValue: label });
 }
 
-function instrumentName(t: TFunction, key: string, spec?: InstrumentSpec | null): string {
+export function instrumentName(t: TFunction, key: string, spec?: InstrumentSpec | null): string {
   return t(`instruments.names.${key}`, { defaultValue: spec?.name ?? key });
 }
 
 /** VAS anchors ("Silent" … "Extremely loud") are keyed by their English text. */
-function anchorLabel(t: TFunction, label: string | undefined, fallback: string): string {
+export function anchorLabel(t: TFunction, label: string | undefined, fallback: string): string {
   if (!label) return fallback;
   return t(`instruments.vasAnchors.${label}`, { defaultValue: label });
 }
 
-interface Option {
+export interface Option {
   label: string;
   value: number;
 }
 
-interface Item {
+export interface Item {
   id: string;
   text: string;
   kind?: string;
@@ -84,7 +84,7 @@ interface Item {
   high?: string;
 }
 
-interface InstrumentSpec {
+export interface InstrumentSpec {
   name: string;
   abbrev: string;
   citation: string;
@@ -96,6 +96,8 @@ interface InstrumentSpec {
   escalates_to?: string;
   /** Set on a long form whose screener already asked some of its items. */
   screener_key?: string;
+  /** The full published item bank, for instruments the client also has a short form of (THI). */
+  long_form_items?: Item[];
 }
 
 export interface QuestionnaireResult {
@@ -689,7 +691,7 @@ export default function Questionnaires({
 }
 
 /* ------------------------------------------------------------------------- */
-function VasItem({
+export function VasItem({
   item,
   value,
   onChange,

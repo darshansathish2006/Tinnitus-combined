@@ -363,7 +363,8 @@
       "questionnaires": "यह आपको कैसे प्रभावित करता है",
       "results": "आपके परिणाम",
       "questionnaire": "आपके टिनिटस के बारे में",
-      "screeners": "नींद, मनोदशा और तनाव"
+      "screeners": "नींद, मनोदशा और तनाव",
+      "optional": "वैकल्पिक परीक्षण"
     },
     "whatHappens": {
       "title": "क्या होगा",

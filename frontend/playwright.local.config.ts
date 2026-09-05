@@ -9,7 +9,7 @@
  * Until that is fixed (delete the empty `backend/.venv`, or run `npm run
  * setup`), start the two servers by hand and point Playwright here:
  *
- *   backend/venv/Scripts/python manage.py runserver 127.0.0.1:8000 --noreload
+ *   backend/venv/Scripts/python manage.py runserver 127.0.0.1:9000 --noreload
  *   npx vite --port 5173 --strictPort --host 127.0.0.1
  *   npx playwright test --config=playwright.local.config.ts
  */

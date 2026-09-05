@@ -6,21 +6,21 @@ import react from "@vitejs/plugin-react";
  *
  * One place, one variable. The port used to be written into three files —
  * `src/api/client.ts`, `scripts/dev.mjs` and the README — so moving the backend
- * off 8000 left the client still calling 8000 and every request failed with no
- * message on screen. Set `VITE_API_TARGET` in `frontend/.env.local` (or in the
- * environment) and both the proxy below and the client follow it.
+ * off 9000 left the client still calling the old port and every request failed
+ * with no message on screen. Set `VITE_API_TARGET` in `frontend/.env.local` (or
+ * in the environment) and both the proxy below and the client follow it.
  */
 function apiTarget(mode: string): string {
   // `loadEnv`, not `process.env`: Vite does not put `.env.local` into the
   // process environment before the config is evaluated, so reading
   // `process.env.VITE_API_TARGET` here would silently miss the file the comment
-  // above tells people to edit — and fall back to 8000 while claiming to be
+  // above tells people to edit — and fall back to 9000 while claiming to be
   // configurable. The third argument is the prefix filter; "" loads every key
   // so a plain `ECHOSENSE_API_PORT` would work too if that is what is set.
   const env = loadEnv(mode, process.cwd(), "");
   const explicit = (env.VITE_API_TARGET || "").trim();
   if (explicit) return explicit;
-  const port = (env.ECHOSENSE_API_PORT || "8000").trim();
+  const port = (env.ECHOSENSE_API_PORT || "9000").trim();
   return `http://127.0.0.1:${port}`;
 }
 

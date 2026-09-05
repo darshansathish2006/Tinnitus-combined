@@ -43,7 +43,6 @@ import {
   ErrorState,
   Field,
   Loading,
-  OptionGroup,
   Panel,
   Readout,
   StepRail,
@@ -52,12 +51,20 @@ import {
   useAsync,
 } from "../components/ui";
 import { Audiogram, Fingerprint, RadialGauge } from "../components/charts";
-import { IconCheck, IconChevronRight, IconFile } from "../components/icons";
+import { IconChevronRight, IconFile } from "../components/icons";
 import { ClinicalSummary } from "./Results";
+import { AboutYouExtended } from "./assessment/AboutYouExtended";
+import {
+  ABOUT_YOU_SECTIONS,
+  SNAPSHOT_SECTION,
+  lateralityFromLocation,
+  type AboutYouAnswer,
+  type AboutYouAnswers,
+} from "./assessment/aboutYouQuestions";
 import Calibration, { type CalibrationResult } from "./assessment/Calibration";
 import Audiometry, { type AudiometryResult } from "./assessment/Audiometry";
 import TinnitusMatch, { type MatchResult } from "./assessment/TinnitusMatch";
-import Questionnaires, { type QuestionnaireResult } from "./assessment/Questionnaires";
+import AboutYourTinnitus from "./assessment/AboutYourTinnitus";
 import HearingMeasurement, {
   MASKING_FREQUENCIES,
   type HearingMeasurementResult,
@@ -78,9 +85,9 @@ import { ReferenceLevelPanel } from "../components/ReferenceLevel";
  */
 const STEPS = [
   { key: "intake", minutes: 2 },
-  { key: "questionnaire", minutes: 2 },
+  { key: "questionnaire", minutes: 6 },
   { key: "hearing", minutes: 6 },
-  { key: "screeners", minutes: 2 },
+  { key: "optional", minutes: 0 },
   { key: "results", minutes: 0 },
 ];
 
@@ -122,7 +129,12 @@ export default function Assessment() {
   const [hearingPhase, setHearingPhase] = useState<HearingPhase>("calibration");
   /** Kept so the results step can show the curve without a refetch. */
   const [measurement, setMeasurement] = useState<HearingMeasurementResult | null>(null);
-  const [offerOptional, setOfferOptional] = useState(false);
+  // Screeners no longer gate this offer — the "Sleep, mood and stress" module
+  // that used to precede it inside this same step was removed and folded into
+  // Module 2 (About Your Tinnitus), which now runs entirely at step 1. Step 3
+  // is reached only after hearing measurement is done, so the offer can show
+  // immediately rather than waiting on a flag another module used to flip.
+  const [offerOptional, setOfferOptional] = useState(true);
   const [doingOptional, setDoingOptional] = useState(false);
 
   const profile = useAsync(() => api.patients.me(), []);
@@ -143,17 +155,6 @@ export default function Assessment() {
    * feature vector. Nothing downstream had to change to accept a list.
    */
   const [characters, setCharacters] = useState<string[]>([CHARACTER_OPTIONS[0]]);
-
-  function toggleCharacter(value: string) {
-    setCharacters((prev) => {
-      if (prev.includes(value)) {
-        // Never allow the set to empty — the question is required, and an empty
-        // answer would silently clear the primary character on save.
-        return prev.length === 1 ? prev : prev.filter((c) => c !== value);
-      }
-      return [...prev, value];
-    });
-  }
   const [laterality, setLaterality] = useState<"left" | "right" | "both" | "central">("both");
   const [onsetMonths, setOnsetMonths] = useState(12);
   const [pulsatile, setPulsatile] = useState(false);
@@ -164,6 +165,24 @@ export default function Assessment() {
   const [comorbidities, setComorbidities] = useState<string[]>([]);
   const [medications, setMedications] = useState("");
   const [consent, setConsent] = useState(false);
+  /**
+   * The extended About You questionnaire (Sections 1–22 plus the tinnitus
+   * snapshot). One flat answer store, matching how `thi_items` already holds a
+   * scored instrument's raw responses — see `Patient.about_you`.
+   *
+   * Four of its answers (`sound_description`, `tinnitus_location`,
+   * `pulsatile_beats_with_heart`, `hearing_aids_current`) are the same
+   * questions `characters`/`laterality`/`pulsatile`/`hearingAids` above already
+   * asked, now asked more completely. Those four legacy variables are kept —
+   * `laterality` in particular is still read by the optional pitch-matching
+   * step below — and are kept in sync with this store by the effects
+   * immediately after the hydration effect, so nothing downstream has to
+   * learn a second source of truth.
+   */
+  const [aboutYou, setAboutYou] = useState<AboutYouAnswers>({});
+  function setAboutYouField(key: string, value: AboutYouAnswer) {
+    setAboutYou((prev) => ({ ...prev, [key]: value }));
+  }
 
   useEffect(() => {
     const p = profile.data;
@@ -183,7 +202,68 @@ export default function Assessment() {
     setComorbidities(p.comorbidities ?? []);
     setMedications((p.medications ?? []).join(", "));
     setConsent(p.consent_research);
+
+    // Seed the four shared answers from the legacy fields only where About You
+    // has not already been answered — a stored `about_you` always wins, so a
+    // patient who has filled in the richer question never sees it reset to the
+    // coarser legacy value. Booleans seed only their positive case: `false` on
+    // `pulsatile`/`hearing_aid_use` is indistinguishable from "never asked",
+    // and presupposing "No" on a question this patient has not actually seen
+    // yet would be answering it for them.
+    setAboutYou((prev) => {
+      const seeded: AboutYouAnswers = { ...(p.about_you as AboutYouAnswers | undefined ?? {}), ...prev };
+      if (seeded.sound_description === undefined) {
+        if (p.tinnitus_characters?.length) seeded.sound_description = p.tinnitus_characters;
+        else if (p.tinnitus_character) seeded.sound_description = [p.tinnitus_character];
+      }
+      if (seeded.tinnitus_location === undefined && p.laterality) {
+        const reverse: Record<string, string> = {
+          left: "Left ear",
+          right: "Right ear",
+          both: "Both ears",
+          central: "In the middle of my head",
+        };
+        if (reverse[p.laterality]) seeded.tinnitus_location = reverse[p.laterality];
+      }
+      if (seeded.pulsatile_beats_with_heart === undefined && p.pulsatile) {
+        seeded.pulsatile_beats_with_heart = "Yes";
+      }
+      if (seeded.hearing_aids_current === undefined && p.hearing_aid_use) {
+        seeded.hearing_aids_current = "Yes";
+      }
+      return seeded;
+    });
   }, [profile.data]);
+
+  /**
+   * Keep the four legacy fields in step with their richer About You answers.
+   *
+   * One effect per field rather than one effect watching all four, so editing
+   * one answer cannot re-trigger the others' derivation and fight a value the
+   * patient just set directly (there is no other way to set these four now,
+   * but the isolation costs nothing and removes the question).
+   */
+  useEffect(() => {
+    const selected = aboutYou.sound_description as string[] | undefined;
+    if (selected && selected.length) setCharacters(selected);
+  }, [aboutYou.sound_description]);
+
+  useEffect(() => {
+    const mapped = lateralityFromLocation(aboutYou.tinnitus_location);
+    if (mapped) setLaterality(mapped);
+  }, [aboutYou.tinnitus_location]);
+
+  useEffect(() => {
+    const answer = aboutYou.pulsatile_beats_with_heart;
+    if (answer === "Yes") setPulsatile(true);
+    else if (answer === "No") setPulsatile(false);
+  }, [aboutYou.pulsatile_beats_with_heart]);
+
+  useEffect(() => {
+    const answer = aboutYou.hearing_aids_current;
+    if (answer === "Yes") setHearingAids(true);
+    else if (answer === "No") setHearingAids(false);
+  }, [aboutYou.hearing_aids_current]);
 
   useEffect(() => () => engine.stopAll(0.2), []);
 
@@ -225,6 +305,7 @@ export default function Assessment() {
         comorbidities,
         medications: medications.split(",").map((m) => m.trim()).filter(Boolean),
         consent_research: consent,
+        about_you: aboutYou,
       });
       await profile.reload();
       await saveModule({}, ["intake"]);
@@ -324,63 +405,36 @@ export default function Assessment() {
   }
 
   /**
-   * Phase one: the tinnitus VAS scales and the THI.
-   *
-   * Saved on its own rather than held in memory until the end, so a patient who
-   * stops after the hearing test still has their handicap score on the record.
-   * Item banks merge server-side, so two partial saves and one whole save
-   * produce the same stored assessment.
+   * "About Your Tinnitus" (Module 2) — VAS, THI, GAD-7 and PSS-10 are each
+   * saved the moment their section is answered or skipped, rather than held in
+   * memory for one save at the end. A patient who stops partway through this
+   * module still has every section they did finish on the record, and a
+   * skipped section is recorded as skipped immediately rather than only if
+   * they happen to reach the last section. TFI/ISI/PHQ-9/EQ-5D-5L are not
+   * saved here at all — those sections have no item content to save (see
+   * `AboutYourTinnitus`) and are never represented as skipped, since nothing
+   * was actually offered and declined.
    */
-  async function submitQuestionnairePhaseOne(result: QuestionnaireResult) {
-    setSaving(true);
-    try {
-      await saveModule(
-        { thi_items: result.thi_items, vas: result.vas },
-        ["thi", "vas"]
-      );
-      markDone("questionnaire", 2);
-    } catch (error) {
-      setFatal(error);
-      toast(error instanceof ApiError ? error.message : t("assessment.toast.answersFailed"), "crit");
-    } finally {
-      setSaving(false);
-    }
-  }
+  const MODULE2_ITEMS_FIELD: Record<string, string> = {
+    vas: "vas",
+    thi: "thi_items",
+    gad7: "gad7_items",
+    pss10: "pss10_items",
+  };
 
-  /** Phase two: the sleep, anxiety, mood and stress screeners, plus escalations. */
-  async function submitQuestionnaires(result: QuestionnaireResult) {
-    setSaving(true);
+  async function saveModule2Section(
+    domainKey: string,
+    items: Record<string, number> | undefined,
+    sectionStatus: "completed" | "skipped"
+  ) {
+    const field = MODULE2_ITEMS_FIELD[domainKey];
+    const body: Record<string, unknown> = { questionnaire_status: { [domainKey]: sectionStatus } };
+    if (sectionStatus === "completed" && field && items) body[field] = items;
     try {
-      await saveModule(
-        {
-          gad2_items: result.gad2_items,
-          phq2_items: result.phq2_items,
-          pss4_items: result.pss4_items,
-          sleep_screen_items: result.sleep_screen_items,
-          gad7_items: result.gad7_items,
-          pss10_items: result.pss10_items,
-          psqi_items: result.psqi_items,
-          escalated_instruments: result.escalated,
-          // A long form that was indicated but declined is recorded, not
-          // dropped: the clinician needs to see an outstanding recommendation,
-          // and "not asked" must never be confused with "asked and negative".
-          deferred_instruments: result.deferred,
-        },
-        ["gad2", "phq2", "pss4", "sleep_screen", ...result.escalated]
-      );
-      if (result.deferred.length > 0) {
-        toast(t("assessment.toast.deferredFlagged"), "info");
-      }
-      setCompleted((prev) => new Set(prev).add("screeners"));
-      // Offer the optional psychoacoustic battery rather than finalising straight
-      // away — the patient chooses, having been told what it buys them.
-      setOfferOptional(true);
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      await saveModule(body, sectionStatus === "completed" ? [domainKey] : []);
     } catch (error) {
-      setFatal(error);
       toast(error instanceof ApiError ? error.message : t("assessment.toast.answersFailed"), "crit");
-    } finally {
-      setSaving(false);
+      throw error;
     }
   }
 
@@ -400,6 +454,26 @@ export default function Assessment() {
           loudness_match_db_hl: result.loudness_match_db_hl,
           masking_thresholds: result.masking_thresholds,
           masking_unmasked_hz: result.masking_unmasked_hz,
+          pitch_match_ear: result.pitch_match_ear,
+          pitch_match_confidence: result.pitch_match_confidence,
+          octave_confusion: result.octave_confusion,
+          pitch_match_trace: result.pitch_match_trace,
+          pitch_match_sound_description: result.pitch_match_sound_description,
+          pitch_match_sound_other_text: result.pitch_match_sound_other_text,
+          pitch_match_initial_level_db: result.pitch_match_initial_level_db,
+          pitch_match_comfort_level_db: result.pitch_match_comfort_level_db,
+          pitch_match_not_sure_count: result.pitch_match_not_sure_count,
+          pitch_match_octave_frequency_hz: result.pitch_match_octave_frequency_hz,
+          pitch_match_octave_response: result.pitch_match_octave_response,
+          pitch_match_confirmation: result.pitch_match_confirmation,
+          pitch_match_repeated: result.pitch_match_repeated,
+          loudness_match_starting_level_db: result.loudness_match_starting_level_db,
+          loudness_match_trace: result.loudness_match_trace,
+          loudness_match_confirmation: result.loudness_match_confirmation,
+          loudness_match_repeated: result.loudness_match_repeated,
+          masking_trace: result.masking_trace,
+          masking_not_sure_count: result.masking_not_sure_count,
+          masking_repeated: result.masking_repeated,
         },
         ["pitch_match", "loudness_match", "masking_profile"]
       );
@@ -476,6 +550,8 @@ export default function Assessment() {
           mml_db_sl: result.mml_db_sl,
           ldl_left: result.ldl_left,
           ldl_right: result.ldl_right,
+          ldl_trace: result.ldl_trace,
+          ldl_repeated: result.ldl_repeated,
           ri_depth_pct: result.ri_depth_pct,
           ri_duration_s: result.ri_duration_s,
           ri_trace: result.ri_trace,
@@ -485,6 +561,18 @@ export default function Assessment() {
           // the same payload it always did.
           ri_reported_category: result.ri_reported_category,
           mml_masker_hz: result.mml_masker_hz,
+          ri_immediate_response: result.ri_immediate_response,
+          ri_baseline_pct: result.ri_baseline_pct,
+          ri_post_stimulation_pct: result.ri_post_stimulation_pct,
+          ri_monitoring: result.ri_monitoring,
+          ri_stimulus_frequency_hz: result.ri_stimulus_frequency_hz,
+          ri_stimulus_level_db: result.ri_stimulus_level_db,
+          ri_stimulation_duration_s: result.ri_stimulation_duration_s,
+          ri_stimulation_started_at: result.ri_stimulation_started_at,
+          ri_stimulation_stopped_at: result.ri_stimulation_stopped_at,
+          ri_reduction_detected_at: result.ri_reduction_detected_at,
+          ri_return_to_baseline_at: result.ri_return_to_baseline_at,
+          ri_repeated: result.ri_repeated,
         },
         ["pitch_match", "loudness_match", "mml", "residual_inhibition"]
       );
@@ -511,7 +599,7 @@ export default function Assessment() {
       } else {
         toast(t("assessment.toast.complete"), "ok");
       }
-      markDone("screeners", 4);
+      markDone("optional", 4);
     } catch (error) {
       setFatal(error);
       toast(error instanceof ApiError ? error.message : t("assessment.toast.finaliseFailed"), "crit");
@@ -559,68 +647,54 @@ export default function Assessment() {
         <div className="grid grid-sidebar" style={{ ["--aside" as string]: "300px" }}>
           <Panel title={t("assessment.intake.title")} bracketed>
             <div className="stack stack-5">
+              {/* -- About Your Tinnitus, Hearing & Health ---------------------- */}
+              {/* The full 22-section questionnaire, including the richer
+                  replacements for "what does it sound like" (Section 4) and
+                  "where do you hear it" (Section 3) that used to be the two
+                  bespoke widgets above — see `aboutYouQuestions.ts` for why
+                  those two specifically were folded in here rather than left
+                  standing beside a fuller version of the same question. */}
               <div className="stack stack-2">
-                <span className="label">{t("assessment.intake.character")}</span>
-                {/* The stored value stays the English token — it feeds the
-                    clinical record and the model's feature vector — while the
-                    label the patient reads is translated. */}
-                <span className="meta">{t("assessment.intake.characterMulti")}</span>
-                {/* Deliberately not `OptionGroup`, which is a single-choice
-                    control: `aria-pressed` on a radio-like group would announce
-                    the wrong semantics for a multi-select. These are toggle
-                    buttons with the same `.option` styling, so the panel looks
-                    exactly as it did while behaving as a set. */}
-                <div
-                  className="grid"
-                  style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "var(--s2)" }}
-                  role="group"
-                  aria-label={t("assessment.intake.character")}
-                >
-                  {CHARACTER_OPTIONS.map((c) => {
-                    const selected = characters.includes(c);
-                    const primary = characters[0] === c;
-                    return (
-                      <button
-                        key={c}
-                        type="button"
-                        className="option"
-                        aria-pressed={selected}
-                        onClick={() => toggleCharacter(c)}
-                      >
-                        <span className="row row--tight row--nowrap" style={{ minWidth: 0 }}>
-                          {selected && <IconCheck size={13} />}
-                          <span style={{ minWidth: 0 }}>
-                            {t(`assessment.character.${c}`, { defaultValue: c })}
-                          </span>
-                          {primary && characters.length > 1 && (
-                            <Chip tone="signal">{t("assessment.intake.characterPrimary")}</Chip>
-                          )}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
+                <h2 style={{ fontSize: "var(--fs-h3)", margin: 0 }}>
+                  {t("assessment.aboutYou.text.pageTitle", "About your tinnitus, hearing & health")}
+                </h2>
+                <p className="meta">
+                  {t(
+                    "assessment.aboutYou.text.pageIntro1",
+                    "This section helps us understand your tinnitus, your hearing and ear health, and any medical or lifestyle factors that may be relevant to your experience."
+                  )}
+                </p>
+                <p className="meta">
+                  {t(
+                    "assessment.aboutYou.text.pageIntro2",
+                    "There are no right or wrong answers. Choose the answer that best describes your experience. If you are unsure, select \u201cI\u2019m not sure.\u201d"
+                  )}
+                </p>
               </div>
 
-              <div className="stack stack-2">
-                <span className="label">{t("assessment.intake.laterality")}</span>
-                <OptionGroup<"left" | "right" | "both" | "central">
-                  options={[
-                    { value: "both", label: t("assessment.intake.both") },
-                    { value: "left", label: t("assessment.intake.left") },
-                    { value: "right", label: t("assessment.intake.right") },
-                    { value: "central", label: t("assessment.intake.central") },
-                  ]}
-                  value={laterality}
-                  onChange={setLaterality}
-                  columns={2}
-                />
-                {(laterality === "left" || laterality === "right") && (
-                  <Panel tone="info" tight>
-                    <p className="meta">{t("assessment.intake.unilateralNote")}</p>
-                  </Panel>
-                )}
-              </div>
+              <AboutYouExtended
+                sections={[...ABOUT_YOU_SECTIONS, SNAPSHOT_SECTION]}
+                answers={aboutYou}
+                onAnswer={setAboutYouField}
+              />
+
+              <Panel tone="ok" tight>
+                <div className="stack stack-1">
+                  <strong>{t("assessment.aboutYou.text.completionTitle", "Thank you for telling us about your tinnitus.")}</strong>
+                  <p className="meta" style={{ margin: 0 }}>
+                    {t(
+                      "assessment.aboutYou.text.completionBody",
+                      "Your answers help us build a clearer picture of your tinnitus and identify factors that may be relevant to your assessment and rehabilitation."
+                    )}
+                  </p>
+                </div>
+              </Panel>
+
+              {(laterality === "left" || laterality === "right") && (
+                <Panel tone="info" tight>
+                  <p className="meta">{t("assessment.intake.unilateralNote")}</p>
+                </Panel>
+              )}
 
               <Field
                 label={t("assessment.intake.duration", { value: fmt.months(onsetMonths) })}
@@ -641,10 +715,8 @@ export default function Assessment() {
                 <div className="stack stack-2">
                   {(
                     [
-                      [pulsatile, setPulsatile, "pulsatile", true],
                       [somatic, setSomatic, "somatic", true],
                       [hyperacusis, setHyperacusis, "hyperacusis", true],
-                      [hearingAids, setHearingAids, "hearingAids", false],
                     ] as const
                   ).map(([value, setter, key, hasHelp]) => (
                     <label key={key} className="option" style={{ cursor: "pointer" }}>
@@ -758,12 +830,32 @@ export default function Assessment() {
       )}
 
       {/* ============================================= 1 · questionnaire === */}
-      {/* The patient's own account of the percept, before it is measured. */}
+      {/* "About Your Tinnitus" — the patient's own account of the percept and
+          its impact, before it is measured. Eight result categories in a fixed
+          order (Tinnitus Severity, Tinnitus Handicap, Tinnitus Functional
+          Impact, Sleep & Insomnia, Anxiety, Mood/Depression, Perceived Stress,
+          Health-Related Quality of Life); this is also where the sleep,
+          anxiety, mood and stress content that used to be a separate
+          "Sleep, mood and stress" step now lives. */}
       {step === 1 && (
-        <Questionnaires
+        <AboutYourTinnitus
           instruments={instruments.data?.instruments ?? null}
-          phase="one"
-          onComplete={submitQuestionnairePhaseOne}
+          initial={{
+            vas: {
+              ...(assessment?.vas_loudness != null ? { vas_loudness: assessment.vas_loudness } : {}),
+              ...(assessment?.vas_annoyance != null ? { vas_annoyance: assessment.vas_annoyance } : {}),
+              ...(assessment?.vas_awareness != null ? { vas_awareness: assessment.vas_awareness } : {}),
+              ...(assessment?.vas_sleep_interference != null
+                ? { vas_sleep_interference: assessment.vas_sleep_interference }
+                : {}),
+            },
+            thi_items: assessment?.thi_items ?? undefined,
+            gad7_items: assessment?.gad7_items ?? undefined,
+            pss10_items: assessment?.pss10_items ?? undefined,
+            questionnaire_status: assessment?.questionnaire_status,
+          }}
+          onSectionSave={saveModule2Section}
+          onAllDone={() => markDone("questionnaire", 2)}
         />
       )}
 
@@ -833,6 +925,7 @@ export default function Assessment() {
             <HearingMeasurement
               onComplete={submitHearingMeasurement}
               initial={measurement ?? undefined}
+              laterality={laterality}
             />
           ) : (
             /* Last, because it is derived from the three above rather than a
@@ -846,15 +939,11 @@ export default function Assessment() {
         </div>
       )}
 
-      {/* ================================================= 3 · screeners === */}
-      {step === 3 && !offerOptional && !doingOptional && (
-        <Questionnaires
-          instruments={instruments.data?.instruments ?? null}
-          phase="two"
-          onComplete={submitQuestionnaires}
-        />
-      )}
-
+      {/* ================================================== 3 · optional === */}
+      {/* The old "Sleep, mood and stress" module used to run here before this
+          offer; it no longer exists as a separate step (its questionnaires
+          moved into Module 2 at step 1), so this offer is now this step's
+          entire content. */}
       {/* -- optional psychoacoustics offer ---------------------------------- */}
       {step === 3 && offerOptional && !doingOptional && (
         <div className="grid grid-sidebar" style={{ ["--aside" as string]: "300px" }}>

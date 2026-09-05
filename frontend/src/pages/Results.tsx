@@ -59,6 +59,19 @@ import {
   ShapWaterfall,
   TrendChart,
 } from "../components/charts";
+import { TinnitusAssessmentDashboard } from "../components/TinnitusAssessmentDashboard";
+import { InstrumentSectionForm, MODULE2_SECTIONS } from "./assessment/AboutYourTinnitus";
+
+/** Field each real About Your Tinnitus instrument's answers are stored under —
+ *  the same mapping `Assessment.tsx` uses to save a section during the
+ *  assessment itself, reused here so completing one from the Results page
+ *  writes to exactly the same place. */
+const MODULE2_ITEMS_FIELD: Record<string, string> = {
+  vas: "vas",
+  thi: "thi_items",
+  gad7: "gad7_items",
+  pss10: "pss10_items",
+};
 
 // Three.js is ~500 kB and the summary renders long before it arrives, so the
 // cochlea streams in beside the text rather than holding up the report.
@@ -120,6 +133,16 @@ export default function Results() {
 
   const [explainTarget, setExplainTarget] = useState<string | null>(null);
   const [fhirOpen, setFhirOpen] = useState(false);
+  // "Complete <instrument>" — reopens one skipped or not-started About Your
+  // Tinnitus instrument without restarting the assessment. The assessment is
+  // already finalised at this point; the server allows a PATCH that touches
+  // only this instrument's own items and status (see
+  // `POST_COMPLETE_EDITABLE_FIELDS` in `backend/api/views.py`) and
+  // `report_clinical` recomputes scores fresh on every call, so reloading the
+  // report after saving is enough — no re-finalise needed.
+  const [completingKey, setCompletingKey] = useState<string | null>(null);
+  const [completingSaving, setCompletingSaving] = useState(false);
+  const instruments = useAsync(() => api.assessments.instruments(), []);
   const [whatIf, setWhatIf] = useState<Record<string, number>>({});
   const [whatIfResult, setWhatIfResult] = useState<any>(null);
   const [whatIfBusy, setWhatIfBusy] = useState(false);
@@ -187,6 +210,28 @@ export default function Results() {
     window.setTimeout(() => window.print(), 150);
   }
 
+  async function saveCompletedInstrument(
+    domainKey: string,
+    items: Record<string, number> | undefined,
+    sectionStatus: "completed" | "skipped"
+  ) {
+    if (!activeId) return;
+    const field = MODULE2_ITEMS_FIELD[domainKey];
+    const body: Record<string, unknown> = { questionnaire_status: { [domainKey]: sectionStatus } };
+    if (sectionStatus === "completed" && field && items) body[field] = items;
+    setCompletingSaving(true);
+    try {
+      await api.assessments.save(activeId, body);
+      setCompletingKey(null);
+      await Promise.all([report.reload(), assessments.reload()]);
+      toast(t("results.dashboard.instrumentSaved", { defaultValue: "Saved." }), "ok");
+    } catch (error) {
+      toast(error instanceof ApiError ? error.message : t("results.dashboard.instrumentSaveFailed", { defaultValue: "Could not save — please try again." }), "crit");
+    } finally {
+      setCompletingSaving(false);
+    }
+  }
+
   async function runWhatIf() {
     if (!activeId || Object.keys(whatIf).length === 0) return;
     setWhatIfBusy(true);
@@ -243,6 +288,18 @@ export default function Results() {
         <>
           {/* ================================================== summary === */}
           <ClinicalSummary report={data} detail={detail} />
+
+          {/* ============================== 04 · tinnitus assessment results === */}
+          {/* Everything here is additive to the plain summary above — the same
+              report, read into the fuller dashboard structure, never a second
+              source of truth for the same numbers. See
+              `TinnitusAssessmentDashboard.tsx` for exactly which existing
+              calculation backs each card. */}
+          <TinnitusAssessmentDashboard
+            report={data}
+            activeAssessment={completed.find((a) => a.id === activeId) ?? null}
+            onCompleteInstrument={setCompletingKey}
+          />
 
           {/* -- the gate to everything technical ------------------------- */}
           <button
@@ -1003,6 +1060,30 @@ export default function Results() {
       </Modal>
 
       <FhirModal open={fhirOpen} onClose={() => setFhirOpen(false)} assessmentId={activeId} />
+
+      <Modal
+        open={completingKey !== null}
+        onClose={() => setCompletingKey(null)}
+        title={
+          completingKey
+            ? t("results.dashboard.completeInstrument", {
+                instrument: MODULE2_SECTIONS.find((s) => s.key === completingKey)?.instrumentAbbrev ?? completingKey,
+                defaultValue: `Complete ${MODULE2_SECTIONS.find((s) => s.key === completingKey)?.instrumentAbbrev ?? completingKey}`,
+              })
+            : ""
+        }
+      >
+        {completingKey && (
+          <InstrumentSectionForm
+            section={MODULE2_SECTIONS.find((s) => s.key === completingKey)!}
+            instruments={instruments.data?.instruments ?? null}
+            onSkip={() => saveCompletedInstrument(completingKey, undefined, "skipped")}
+            onSubmit={(answers) => saveCompletedInstrument(completingKey, answers, "completed")}
+            submitLabel={t("common.save", { defaultValue: "Save" })}
+            saving={completingSaving}
+          />
+        )}
+      </Modal>
     </div>
   );
 }

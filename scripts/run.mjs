@@ -116,7 +116,7 @@ const passthrough = process.argv.slice(3);
 try {
   switch (task) {
     case "api":
-      await run(python(), ["manage.py", "runserver", "8000", ...passthrough], backend);
+      await run(python(), ["manage.py", "runserver", "9000", ...passthrough], backend);
       break;
     case "migrate":
       await run(python(), ["manage.py", "migrate", ...passthrough], backend);

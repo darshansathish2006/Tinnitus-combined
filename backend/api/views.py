@@ -124,6 +124,15 @@ from .services.monitoring import check_diary_alerts, diary_analytics, sync_alert
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+# The standard audiometric octave series the Sound Tolerance (ULL/LDL)
+# workflow tests, mirroring `ULL_FREQUENCIES` in
+# `frontend/src/pages/assessment/TinnitusMatch.tsx` (itself reused from the
+# `CORE_SEQUENCE` already used for pure-tone audiometry, not a new clinical
+# value). Kept here rather than derived so the reported sequence can never
+# drift from what the frontend actually presented.
+ULL_FREQUENCIES: list[int] = [250, 500, 1000, 2000, 4000, 8000]
+
+
 def audit(request, action: str, entity: str = "", entity_id: int | None = None, **meta) -> None:
     """Append to the audit trail. Never raises — a failed audit write must not take
     down the clinical action it was recording."""
@@ -716,6 +725,18 @@ def apply_submission(assessment: Assessment, data: dict[str, Any]) -> None:
         "mml_masker_hz", "ri_reported_category",
         "audiometry_reliable", "audiometry_notes", "audiometry_false_positives",
         "audiometry_catch_trials", "audiometry_retest_agreement_db",
+        "pitch_match_sound_description", "pitch_match_sound_other_text",
+        "pitch_match_initial_level_db", "pitch_match_comfort_level_db",
+        "pitch_match_not_sure_count", "pitch_match_octave_frequency_hz",
+        "pitch_match_octave_response", "pitch_match_confirmation", "pitch_match_repeated",
+        "loudness_match_starting_level_db", "loudness_match_trace",
+        "loudness_match_confirmation", "loudness_match_repeated",
+        "masking_trace", "masking_not_sure_count", "masking_repeated",
+        "ldl_trace", "ldl_repeated",
+        "ri_immediate_response", "ri_baseline_pct", "ri_post_stimulation_pct", "ri_monitoring",
+        "ri_stimulus_frequency_hz", "ri_stimulus_level_db", "ri_stimulation_duration_s",
+        "ri_stimulation_started_at", "ri_stimulation_stopped_at",
+        "ri_reduction_detected_at", "ri_return_to_baseline_at", "ri_repeated",
     ):
         if field in data:
             setattr(assessment, field, data[field])
@@ -755,6 +776,12 @@ def apply_submission(assessment: Assessment, data: dict[str, Any]) -> None:
         raw = data["sleep_screen_items"].get("sleep_screen")
         if raw is not None:
             assessment.sleep_screen_score = int(raw)
+
+    if "questionnaire_status" in data:
+        assessment.questionnaire_status = {
+            **(assessment.questionnaire_status or {}),
+            **data["questionnaire_status"],
+        }
 
     # Which indicated long forms were administered, and which were declined.
     #
@@ -874,14 +901,29 @@ def assessment_detail(request, assessment_id: int):
         return Response({"detail": "Assessment not found for this patient."}, status=status.HTTP_404_NOT_FOUND)
 
     if request.method == "PATCH":
-        if assessment.status == AssessmentStatus.COMPLETE:
-            return Response(
-                {"detail": "This assessment is finalised. Start a new one to record new measurements."},
-                status=status.HTTP_409_CONFLICT,
-            )
         serializer = AssessmentSubmitSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
+
+        if assessment.status == AssessmentStatus.COMPLETE:
+            # A finalised assessment's *measurements* are locked — audiometry,
+            # psychoacoustics, masking — because they describe a fixed sitting
+            # and re-editing them after the report has been generated would let
+            # a client silently rewrite the clinical record. Completing a
+            # previously skipped or not-started "About Your Tinnitus" section
+            # is a narrow, deliberate exception: the Results page must be able
+            # to send the patient back into exactly the one instrument they
+            # skipped without restarting the whole assessment, and doing so
+            # touches only that instrument's own items and status, never a
+            # measurement. `report_clinical` recomputes scores fresh on every
+            # call, so no re-finalise step is needed for the new score to show.
+            touched = {k for k in data if k not in ("modules_done", "save_calibration")}
+            if not touched or not touched <= POST_COMPLETE_EDITABLE_FIELDS:
+                return Response(
+                    {"detail": "This assessment is finalised. Start a new one to record new measurements."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+
         apply_submission(assessment, data)
 
         # Remember the headphone calibration so returning patients can skip it.
@@ -905,6 +947,102 @@ def assessment_detail(request, assessment_id: int):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     return Response(AssessmentSerializer(assessment).data)
+
+
+# --------------------------------------------------------------------------- #
+# "About Your Tinnitus" module — the 8 result categories the Results page must
+# report on, and why each one is or is not available.
+#
+# Four instruments (VAS, THI, GAD-7, PSS-10) are fully implemented and scored by
+# `score_all`. The other four (TFI, ISI, PHQ-9, EQ-5D-5L) have no validated item
+# content anywhere in this codebase — per an explicit product decision, they are
+# shown as honestly unavailable rather than approximated, invented, or silently
+# dropped. This list is the single source of truth both `report_clinical` and
+# the frontend Results page key off, so the two can never describe a category
+# differently.
+#: The only fields a PATCH may touch once an assessment is finalised — see the
+#: guard in `assessment_detail`. Everything else stays locked after finalise.
+POST_COMPLETE_EDITABLE_FIELDS = frozenset(
+    {"thi_items", "vas", "gad7_items", "pss10_items", "questionnaire_status"}
+)
+
+MODULE2_DOMAINS: list[dict[str, str]] = [
+    {"key": "vas", "category": "Tinnitus Severity", "instrument": "VAS / NRS", "kind": "real"},
+    {"key": "thi", "category": "Tinnitus Handicap", "instrument": "THI", "kind": "real"},
+    {"key": "tfi", "category": "Tinnitus Functional Impact", "instrument": "TFI", "kind": "stub"},
+    {"key": "isi", "category": "Sleep & Insomnia", "instrument": "ISI", "kind": "stub"},
+    {"key": "gad7", "category": "Anxiety", "instrument": "GAD-7", "kind": "real"},
+    {"key": "phq9", "category": "Mood / Depression", "instrument": "PHQ-9", "kind": "stub"},
+    {"key": "pss10", "category": "Perceived Stress", "instrument": "PSS", "kind": "real"},
+    {"key": "eq5d5l", "category": "Health-Related Quality of Life", "instrument": "EQ-5D-5L", "kind": "stub"},
+]
+
+
+def module2_status(assessment: Assessment, scores: dict[str, Any]) -> list[dict[str, Any]]:
+    """Per-domain availability for the About Your Tinnitus results section.
+
+    Never derives a result from a skipped or missing instrument, and never
+    reports a stub instrument as anything other than unavailable — see the
+    module docstring above.
+    """
+    stored_status = assessment.questionnaire_status or {}
+    out: list[dict[str, Any]] = []
+    for domain in MODULE2_DOMAINS:
+        key = domain["key"]
+        if domain["kind"] == "stub":
+            out.append(
+                {
+                    **domain,
+                    "status": "unavailable",
+                    "available": False,
+                    "score": None,
+                    "grade": None,
+                    "reason": f"{domain['instrument']} is not yet available in this system.",
+                }
+            )
+            continue
+
+        if key == "vas":
+            vas = scores.get("vas") or {}
+            has_value = any(v is not None for v in vas.values())
+            score, grade = None, None
+        else:
+            entry = scores.get(key) or {}
+            score, grade = entry.get("score"), entry.get("grade")
+            has_value = score is not None
+
+        status = stored_status.get(key)
+        if status is None:
+            # No explicit status was ever recorded for this instrument — true of
+            # every assessment finalised before this skip feature existed. Infer
+            # it from whether a real score is already on file rather than
+            # defaulting to "not_started", so a historical assessment's genuine
+            # THI/GAD-7/PSS-10/VAS result is never hidden behind an
+            # "unavailable" message it did nothing to earn.
+            status = "completed" if has_value else "not_started"
+
+        available = status == "completed" and has_value
+
+        reason = None
+        if not available:
+            if status == "skipped":
+                reason = f"{domain['instrument']} was skipped."
+            elif status == "in_progress":
+                reason = f"{domain['instrument']} was started but not finished."
+            else:
+                reason = f"{domain['instrument']} has not been completed yet."
+
+        out.append(
+            {
+                **domain,
+                "status": status,
+                "available": available,
+                "score": score,
+                "grade": grade,
+                "reason": reason,
+            }
+        )
+    return out
 
 
 def masking_analysis(assessment: Assessment) -> dict[str, Any]:
@@ -3060,6 +3198,12 @@ def report_clinical(request):
                 "onset": patient.onset_date,
                 "duration_months": patient.duration_months,
             },
+            # The extended About You questionnaire, verbatim. Added for the plain
+            # results dashboard's "Tinnitus Severity" snapshot
+            # (current/bother/awareness, Section-22-adjacent) — nothing here is
+            # recomputed, this is the same dict `PATCH /api/patients/me` already
+            # writes to `Patient.about_you`.
+            "about_you": patient.about_you or {},
             "presenting_complaint": {
                 "character": patient.tinnitus_character,
                 # The full set, for the many patients who hear more than one
@@ -3100,11 +3244,13 @@ def report_clinical(request):
                 "pitch_match_ear": assessment.pitch_match_ear or None,
                 "pitch_match_confidence": assessment.pitch_match_confidence,
                 "octave_confusion": assessment.octave_confusion,
+                "loudness_match_db_hl": assessment.loudness_match_db_hl,
                 "loudness_match_db_sl": assessment.loudness_match_db_sl,
                 "mml_db_sl": assessment.mml_db_sl,
                 "mml_masker_hz": assessment.mml_masker_hz,
                 "maskability": result["derived"].get("maskability"),
                 "residual_inhibition": result["derived"].get("residual_inhibition"),
+                "ri_depth_pct": assessment.ri_depth_pct,
                 # What the patient reported when the masker stopped, beside the
                 # grade the trace was scored into. Both, never one instead of
                 # the other — see the model.
@@ -3121,8 +3267,95 @@ def report_clinical(request):
                 "performed": bool(assessment.pitch_match_hz),
                 "note": "Psychoacoustic testing is optional per AAO-HNSF guidance and is offered "
                 "because it is what makes a therapy notch possible.",
+                # The pitch-match workflow's own patient-reported context and
+                # trial history, additive to `pitch_match_hz`/`_ear`/`_confidence`
+                # above (unchanged, still the fields every existing reader of
+                # this report already uses for the matched frequency itself).
+                "pitch_match": {
+                    "location": assessment.pitch_match_ear or None,
+                    "sound_description": assessment.pitch_match_sound_description or None,
+                    "sound_other_text": assessment.pitch_match_sound_other_text or None,
+                    # Always a pure tone in this implementation — the same
+                    # `engine.playTone` stimulus every A/B comparison plays.
+                    "stimulus_type": "pure_tone" if assessment.pitch_match_hz else None,
+                    "initial_level_db": assessment.pitch_match_initial_level_db,
+                    "comfort_level_db": assessment.pitch_match_comfort_level_db,
+                    "trials": assessment.pitch_match_trace or [],
+                    "trial_count": len(assessment.pitch_match_trace or []),
+                    "not_sure_count": assessment.pitch_match_not_sure_count,
+                    "octave_frequency_hz": assessment.pitch_match_octave_frequency_hz,
+                    "octave_response": assessment.pitch_match_octave_response or None,
+                    "confirmation": assessment.pitch_match_confirmation or None,
+                    "repeated": assessment.pitch_match_repeated,
+                },
+                # The loudness-match workflow's own starting level and trial
+                # history, additive to `loudness_match_db_hl`/`_db_sl` above
+                # (unchanged — still the fields every existing reader already
+                # uses for the matched level itself). The reference frequency
+                # is never duplicated here: it is always `pitch_match_hz`,
+                # since loudness matching holds frequency fixed at whatever
+                # pitch matching already found.
+                "loudness_match": {
+                    "reference_frequency_hz": assessment.pitch_match_hz,
+                    "stimulus_type": "pure_tone" if assessment.loudness_match_db_hl is not None else None,
+                    "starting_level_db": assessment.loudness_match_starting_level_db,
+                    "trials": assessment.loudness_match_trace or [],
+                    "trial_count": len(assessment.loudness_match_trace or []),
+                    "confirmation": assessment.loudness_match_confirmation or None,
+                    "repeated": assessment.loudness_match_repeated,
+                },
+                # The Feldmann masking-curve workflow's complete per-frequency
+                # adaptive trial history, additive to `masking` above (built by
+                # `masking_analysis()`, unchanged — still the single source
+                # every existing reader uses for the curve and the reference
+                # level themselves, both derived from `masking_thresholds` /
+                # `masking_unmasked_hz`, not from this trial-level detail).
+                "masking_curve": {
+                    "tinnitus_pitch_hz": assessment.pitch_match_hz,
+                    "stimulus_type": "narrowband_noise" if assessment.masking_trace else None,
+                    "frequency_sequence": masking.MASKING_FREQUENCIES,
+                    "frequencies": assessment.masking_trace or [],
+                    "not_sure_count": assessment.masking_not_sure_count,
+                    "repeated": assessment.masking_repeated,
+                },
+                # The residual-inhibition workflow's structured immediate
+                # response and monitoring log, additive to `ri_depth_pct` /
+                # `ri_duration_s` / `ri_trace` / `ri_category` /
+                # `ri_reported_category` above (unchanged — still the single
+                # source `classify_residual_inhibition` and every existing
+                # reader of this report already use for the recovery curve and
+                # its grade).
+                "residual_inhibition_detail": {
+                    "stimulus_frequency_hz": assessment.ri_stimulus_frequency_hz,
+                    "stimulus_level_db": assessment.ri_stimulus_level_db,
+                    "stimulation_duration_s": assessment.ri_stimulation_duration_s,
+                    "stimulation_started_at": assessment.ri_stimulation_started_at,
+                    "stimulation_stopped_at": assessment.ri_stimulation_stopped_at,
+                    "immediate_response": assessment.ri_immediate_response or None,
+                    "reduction_detected_at": assessment.ri_reduction_detected_at,
+                    "baseline_pct": assessment.ri_baseline_pct,
+                    "post_stimulation_pct": assessment.ri_post_stimulation_pct,
+                    "monitoring": assessment.ri_monitoring or [],
+                    "return_to_baseline_at": assessment.ri_return_to_baseline_at,
+                    "repeated": assessment.ri_repeated,
+                },
+                # The Sound Tolerance / ULL-LDL workflow's complete
+                # multi-frequency, multi-ear trial history, additive to
+                # `ldl_left` / `ldl_right` above (unchanged — still the 1 kHz
+                # scalar per ear every existing reader, including the therapy
+                # engine's output cap, already uses).
+                "sound_tolerance": {
+                    "frequency_sequence": ULL_FREQUENCIES,
+                    "results": assessment.ldl_trace or [],
+                    "repeated": assessment.ldl_repeated,
+                },
             },
             "questionnaires": result["scores"],
+            # The 8 "About Your Tinnitus" result categories and whether each is
+            # available — see `module2_status`. The frontend renders its
+            # unavailable/skipped/not-completed messaging entirely from this
+            # list rather than re-deriving availability from raw scores.
+            "about_your_tinnitus": module2_status(assessment, result["scores"]),
             "stepped_screening": {
                 "escalations": result.get("escalations", []),
                 "protocol": STEPPED_PROTOCOL,
