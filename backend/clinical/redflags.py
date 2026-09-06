@@ -123,6 +123,7 @@ def evaluate_red_flags(
     thi = (scores.get("thi") or {})
     gad7 = (scores.get("gad7") or {})
     phq2 = (scores.get("phq2") or {})
+    phq9 = (scores.get("phq9") or {})
     if "catastrophic_ideation_item" in (thi.get("flags") or []) or (thi.get("score") or 0) >= 78:
         flag(
             "psychological_distress_severe",
@@ -132,12 +133,30 @@ def evaluate_red_flags(
             f"THI {thi.get('score')}/100 ({thi.get('grade')}) with maximal responses on the hopelessness cluster.",
             "Clinical psychology / mental health",
         )
+    # The PHQ-9's own item 9 is checked independently of, and takes priority
+    # over, the PHQ-2 screen below: a direct endorsement of self-harm
+    # ideation is a safety fact on its own, whether or not the rest of the
+    # PHQ-9 (or a PHQ-2) was ever completed. See `score_phq9` in
+    # `clinical/instruments.py` for where `item9_positive` is set.
+    if "item9_positive" in (phq9.get("flags") or []):
+        item9_value = (assessment.get("phq9_items") or {}).get("phq9")
+        flag(
+            "phq9_self_harm_ideation",
+            "PHQ-9 item 9: thoughts of self-harm",
+            "urgent",
+            "Directly assess suicide/self-harm risk (intent, plan, means, protective factors) before "
+            "this encounter ends, regardless of the overall PHQ-9 total. Coordinate with primary care "
+            "or mental health the same day.",
+            f"PHQ-9 item 9 endorsed (response {item9_value}/3).",
+            "Primary care / mental health - same-day",
+        )
     if (phq2.get("score") or 0) >= 3:
         flag(
             "depression_screen_positive",
             "Positive depression screen",
             "soon",
-            "Administer PHQ-9 and assess suicidal ideation directly. Coordinate with primary care.",
+            "Review the full PHQ-9 (available under About Your Tinnitus) and assess suicidal ideation "
+            "directly, or administer it now if not yet completed. Coordinate with primary care.",
             f"PHQ-2 {phq2.get('score')}/6.",
             "Primary care / mental health",
         )

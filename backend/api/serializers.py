@@ -375,6 +375,8 @@ class AssessmentSubmitSerializer(serializers.Serializer):
     # client cannot submit a summary that disagrees with the data it summarises.
 
     thi_items = serializers.DictField(required=False)
+    tfi_items = serializers.DictField(required=False)
+    isi_items = serializers.DictField(required=False)
     vas = serializers.DictField(required=False)
     psqi_items = serializers.DictField(required=False)
     pss10_items = serializers.DictField(required=False)
@@ -382,6 +384,10 @@ class AssessmentSubmitSerializer(serializers.Serializer):
     gad7_items = serializers.DictField(required=False)
     gad2_items = serializers.DictField(required=False)
     phq2_items = serializers.DictField(required=False)
+    phq9_items = serializers.DictField(required=False)
+    # The PHQ-9's separate, non-scored functional-difficulty item — never
+    # folded into the 0-27 symptom total.
+    phq9_functional_difficulty = serializers.IntegerField(required=False, allow_null=True, min_value=1, max_value=4)
     sleep_screen_items = serializers.DictField(required=False)
     # Per-instrument status for the About Your Tinnitus module's skip feature —
     # {"thi": "completed"} or {"gad7": "skipped"}. Merged onto the stored dict,

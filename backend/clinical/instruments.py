@@ -16,11 +16,30 @@ that scores are comparable with the literature and with paper administration:
              reverse scored, total 0-40.
 * **GAD-7** - Generalised Anxiety Disorder 7 (Spitzer et al., 2006). 0-21.
 * **PHQ-2** - Depression screen (Kroenke et al., 2003). Positive at >=3.
-* **TFI-SF** - Short screening subset used for the daily check-in trend line.
+* **TFI** - Tinnitus Functional Index (Meikle et al., 2012). 25 items, 8
+             subscales, 0-100. Items 1 and 3 are percentage scales divided by
+             10 for scoring; every other item is already 0-10. Invalid (no
+             score reported) if fewer than 19 of 25 items are answered; a
+             subscale is invalid if more than one of its items is missing.
+             The overall score is always computed from the individual items,
+             never from an average of the subscale scores.
+* **ISI** - Insomnia Severity Index (Bastien et al., 2001). Seven scored
+             components (three make up the published form's grouped item 1),
+             each 0-4, summed to 0-28. Unlike GAD-7/PSS-10 this is never
+             prorated: the source specifies no partial-completion allowance,
+             so all seven are required or no score is reported at all.
+* **PHQ-9** - Patient Health Questionnaire-9 (Kroenke et al., 2001). Nine
+             items, each 0-3, summed to 0-27; also never prorated, for the
+             same reason as the ISI. Item 9 (thoughts of self-harm) is
+             flagged independently of that all-or-nothing gate - a positive
+             response is a safety fact regardless of form completeness - and
+             `clinical/redflags.py` acts on it exactly the way it already
+             acts on THI's despair-item flag.
 
 Scoring is deliberately tolerant of partial completion: `answered`/`expected`
 counts are returned so the UI and the ML layer can distinguish "score 0" from
-"not administered", and prorating is applied only when >=80% of items are present.
+"not administered", and prorating is applied only when >=80% of items are present
+(the TFI, ISI and PHQ-9 are the exceptions - see above).
 """
 
 from __future__ import annotations
@@ -610,7 +629,10 @@ GAD7_ITEMS = [
 
 PHQ2_ITEMS = [
     {"id": "phq1", "text": "Little interest or pleasure in doing things"},
-    {"id": "phq2", "text": "Feeling down, depressed or hopeless"},
+    # Corrected to match the published PHQ-9 wording exactly (comma before
+    # "or") when the full PHQ-9 was implemented alongside this screener —
+    # a punctuation-only fix, item id and scoring both unchanged.
+    {"id": "phq2", "text": "Feeling down, depressed, or hopeless"},
 ]
 
 FOUR_POINT_OPTIONS = [
@@ -806,10 +828,12 @@ STEPPED_PROTOCOL: dict[str, Any] = {
         {
             "screener": "phq2",
             "cutoff": 3,
-            "escalates_to": "phq9_referral",
-            "extra_items": 0,
-            "basis": "Kroenke K, Spitzer RL, Williams JB. Med Care. 2003;41(11):1284-92. "
-            "PHQ-9 administration is a clinician action, not a self-serve step.",
+            "escalates_to": "phq9",
+            "extra_items": 7,
+            "basis": "Kroenke K, Spitzer RL, Williams JB. J Gen Intern Med. 2001;16(9):606-13. "
+            "The PHQ-9 is administered directly, in full, under About Your Tinnitus (Mood / "
+            "Depression) - not escalated inline here, the same way GAD-7 and PSS-10 are.",
+            "optional": True,
         },
         {
             "screener": "pss4",
@@ -929,6 +953,525 @@ def score_vas(raw: Mapping[str, Any] | None) -> dict[str, float | None]:
 
 
 # --------------------------------------------------------------------------- #
+# TFI - Tinnitus Functional Index
+# --------------------------------------------------------------------------- #
+# Meikle MB, Henry JA, Griest SE, et al. The Tinnitus Functional Index:
+# development of a new clinical measure for chronic, intrusive tinnitus. Ear
+# Hear. 2012;33(2):153-76. Item text, response scales, item numbering, subscale
+# membership and the scoring/validity rules below are taken verbatim from the
+# published TFI instrument and scoring instructions (Oregon Health & Science
+# University, 2008) - nothing here is paraphrased, reordered or invented.
+#
+# Two response kinds, per the published form:
+#   * "percent" - items 1 and 3 only, an 11-point 0%/10%/.../100% scale.
+#   * "scale10" - item 2 and items 4-25, an 11-point 0-10 scale.
+# Both kinds are scored on the same 0-10 basis: a "percent" answer is divided
+# by 10 for scoring only (see `_tfi_item_score`) - the stored raw answer is
+# never overwritten with the transformed value.
+TFI_ITEMS: list[dict[str, Any]] = [
+    {"id": "tfi1", "n": 1, "sub": "intrusive", "kind": "percent",
+     "context": "Over the PAST WEEK...",
+     "text": "What percentage of your time awake were you consciously AWARE OF your tinnitus?",
+     "low": "Never aware", "high": "Always aware"},
+    {"id": "tfi2", "n": 2, "sub": "intrusive", "kind": "scale10",
+     "context": "Over the PAST WEEK...",
+     "text": "How STRONG or LOUD was your tinnitus?",
+     "low": "Not at all strong or loud", "high": "Extremely strong or loud"},
+    {"id": "tfi3", "n": 3, "sub": "intrusive", "kind": "percent",
+     "context": "Over the PAST WEEK...",
+     "text": "What percentage of your time awake were you ANNOYED by your tinnitus?",
+     "low": "None of the time", "high": "All of the time"},
+    {"id": "tfi4", "n": 4, "sub": "sense_of_control", "kind": "scale10",
+     "context": "Over the PAST WEEK...",
+     "text": "Did you feel IN CONTROL in regard to your tinnitus?",
+     "low": "Very much in control", "high": "Never in control"},
+    {"id": "tfi5", "n": 5, "sub": "sense_of_control", "kind": "scale10",
+     "context": "Over the PAST WEEK...",
+     "text": "How easy was it for you to COPE with your tinnitus?",
+     "low": "Very easy to cope", "high": "Impossible to cope"},
+    {"id": "tfi6", "n": 6, "sub": "sense_of_control", "kind": "scale10",
+     "context": "Over the PAST WEEK...",
+     "text": "How easy was it for you to IGNORE your tinnitus?",
+     "low": "Very easy to ignore", "high": "Impossible to ignore"},
+    {"id": "tfi7", "n": 7, "sub": "cognitive", "kind": "scale10",
+     "context": "Over the PAST WEEK...",
+     "text": "Your ability to CONCENTRATE?",
+     "low": "Did not interfere", "high": "Completely interfered"},
+    {"id": "tfi8", "n": 8, "sub": "cognitive", "kind": "scale10",
+     "context": "Over the PAST WEEK...",
+     "text": "Your ability to THINK CLEARLY?",
+     "low": "Did not interfere", "high": "Completely interfered"},
+    {"id": "tfi9", "n": 9, "sub": "cognitive", "kind": "scale10",
+     "context": "Over the PAST WEEK...",
+     "text": "Your ability to FOCUS ATTENTION on other things besides your tinnitus?",
+     "low": "Did not interfere", "high": "Completely interfered"},
+    {"id": "tfi10", "n": 10, "sub": "sleep", "kind": "scale10",
+     "context": "Over the PAST WEEK...",
+     "text": "How often did your tinnitus make it difficult to FALL ASLEEP or STAY ASLEEP?",
+     "low": "Never had difficulty", "high": "Always had difficulty"},
+    {"id": "tfi11", "n": 11, "sub": "sleep", "kind": "scale10",
+     "context": "Over the PAST WEEK...",
+     "text": "How often did your tinnitus cause you difficulty in getting AS MUCH SLEEP as you needed?",
+     "low": "Never had difficulty", "high": "Always had difficulty"},
+    {"id": "tfi12", "n": 12, "sub": "sleep", "kind": "scale10",
+     "context": "Over the PAST WEEK...",
+     "text": "How much of the time did your tinnitus keep you from SLEEPING as DEEPLY or as PEACEFULLY as you would have liked?",
+     "low": "None of the time", "high": "All of the time"},
+    {"id": "tfi13", "n": 13, "sub": "auditory", "kind": "scale10",
+     "context": "Over the PAST WEEK, how much has your tinnitus interfered with...",
+     "text": "Your ability to HEAR CLEARLY?",
+     "low": "Did not interfere", "high": "Completely interfered"},
+    {"id": "tfi14", "n": 14, "sub": "auditory", "kind": "scale10",
+     "context": "Over the PAST WEEK, how much has your tinnitus interfered with...",
+     "text": "Your ability to UNDERSTAND PEOPLE who are talking?",
+     "low": "Did not interfere", "high": "Completely interfered"},
+    {"id": "tfi15", "n": 15, "sub": "auditory", "kind": "scale10",
+     "context": "Over the PAST WEEK, how much has your tinnitus interfered with...",
+     "text": "Your ability to FOLLOW CONVERSATIONS in a group or at meetings?",
+     "low": "Did not interfere", "high": "Completely interfered"},
+    {"id": "tfi16", "n": 16, "sub": "relaxation", "kind": "scale10",
+     "context": "Over the PAST WEEK, how much has your tinnitus interfered with...",
+     "text": "Your QUIET RESTING ACTIVITIES?",
+     "low": "Did not interfere", "high": "Completely interfered"},
+    {"id": "tfi17", "n": 17, "sub": "relaxation", "kind": "scale10",
+     "context": "Over the PAST WEEK, how much has your tinnitus interfered with...",
+     "text": "Your ability to RELAX?",
+     "low": "Did not interfere", "high": "Completely interfered"},
+    {"id": "tfi18", "n": 18, "sub": "relaxation", "kind": "scale10",
+     "context": "Over the PAST WEEK, how much has your tinnitus interfered with...",
+     "text": 'Your ability to enjoy "PEACE AND QUIET"?',
+     "low": "Did not interfere", "high": "Completely interfered"},
+    {"id": "tfi19", "n": 19, "sub": "quality_of_life", "kind": "scale10",
+     "context": "Over the PAST WEEK, how much has your tinnitus interfered with...",
+     "text": "Your enjoyment of SOCIAL ACTIVITIES?",
+     "low": "Did not interfere", "high": "Completely interfered"},
+    {"id": "tfi20", "n": 20, "sub": "quality_of_life", "kind": "scale10",
+     "context": "Over the PAST WEEK, how much has your tinnitus interfered with...",
+     "text": "Your ENJOYMENT OF LIFE?",
+     "low": "Did not interfere", "high": "Completely interfered"},
+    {"id": "tfi21", "n": 21, "sub": "quality_of_life", "kind": "scale10",
+     "context": "Over the PAST WEEK, how much has your tinnitus interfered with...",
+     "text": "Your RELATIONSHIPS with family, friends and other people?",
+     "low": "Did not interfere", "high": "Completely interfered"},
+    {"id": "tfi22", "n": 22, "sub": "quality_of_life", "kind": "scale10",
+     "context": "Over the PAST WEEK...",
+     "text": "How often did your tinnitus cause you to have difficulty performing your WORK OR OTHER "
+     "TASKS, such as home maintenance, school work, or caring for children or others?",
+     "low": "Never had difficulty", "high": "Always had difficulty"},
+    {"id": "tfi23", "n": 23, "sub": "emotional", "kind": "scale10",
+     "context": "Over the PAST WEEK...",
+     "text": "How ANXIOUS or WORRIED has your tinnitus made you feel?",
+     "low": "Not at all anxious or worried", "high": "Extremely anxious or worried"},
+    {"id": "tfi24", "n": 24, "sub": "emotional", "kind": "scale10",
+     "context": "Over the PAST WEEK...",
+     "text": "How BOTHERED or UPSET have you been because of your tinnitus?",
+     "low": "Not at all bothered or upset", "high": "Extremely bothered or upset"},
+    {"id": "tfi25", "n": 25, "sub": "emotional", "kind": "scale10",
+     "context": "Over the PAST WEEK...",
+     "text": "How DEPRESSED were you because of your tinnitus?",
+     "low": "Not at all depressed", "high": "Extremely depressed"},
+]
+
+TFI_ITEM_IDS = [i["id"] for i in TFI_ITEMS]
+# Items 1 and 3 are the only percentage-scale items; every other item is
+# already on the 0-10 scale the overall/subscale formulas use directly.
+TFI_PERCENT_IDS = {i["id"] for i in TFI_ITEMS if i["kind"] == "percent"}
+
+TFI_PERCENT_OPTIONS = [{"label": f"{v}%", "value": v} for v in range(0, 101, 10)]
+TFI_SCALE_OPTIONS = [{"label": str(v), "value": v} for v in range(0, 11)]
+
+# The eight published subscales, in the order the scoring instructions list
+# them. Every subscale tolerates at most one omitted item - the Quality of
+# Life subscale included, despite having four items instead of three.
+TFI_SUBSCALES: dict[str, list[str]] = {
+    "intrusive": ["tfi1", "tfi2", "tfi3"],
+    "sense_of_control": ["tfi4", "tfi5", "tfi6"],
+    "cognitive": ["tfi7", "tfi8", "tfi9"],
+    "sleep": ["tfi10", "tfi11", "tfi12"],
+    "auditory": ["tfi13", "tfi14", "tfi15"],
+    "relaxation": ["tfi16", "tfi17", "tfi18"],
+    "quality_of_life": ["tfi19", "tfi20", "tfi21", "tfi22"],
+    "emotional": ["tfi23", "tfi24", "tfi25"],
+}
+TFI_SUBSCALE_MAX_OMITTED = 1
+
+# "CAUTION - Overall TFI score is not valid if respondent omits 7 or more
+# items. To be valid... the respondent must answer at least 19 items."
+TFI_MIN_VALID_OVERALL = 19
+TFI_INSUFFICIENT_MESSAGE = (
+    "Overall TFI score cannot be calculated because fewer than 19 items have valid responses."
+)
+
+
+def _tfi_item_score(item_id: str, raw_value: float) -> float:
+    """The 0-10 scoring representation of one answer.
+
+    Items 1 and 3 are collected as a percentage and divided by 10 for scoring,
+    exactly as the published instructions specify - the caller keeps the raw
+    percentage separately and this function never mutates it.
+    """
+    return raw_value / 10.0 if item_id in TFI_PERCENT_IDS else raw_value
+
+
+def _tfi_valid_items(raw: Mapping[str, Any] | None) -> dict[str, float]:
+    """Raw answers, validated and converted to their 0-10 scoring value.
+
+    An out-of-range, off-grid, or unparseable answer is dropped rather than
+    clamped or coerced - a bad value must count as "not answered", never as a
+    guessed-at answer that would change how many items are valid.
+
+    Every item is collected on screen by the same 11-position slider (0%,
+    10%, ..., 100%) - see `AboutYourTinnitus.tsx::TfiSlider` - so a value off
+    that grid cannot have come from an honest interaction and must not be
+    trusted from the client alone:
+      * "percent" items (1, 3) store the percentage itself, so a legitimate
+        value is a multiple of 10 in [0, 100].
+      * every other item stores the slider's 0-10 scoring value directly, so
+        a legitimate value is a whole number in [0, 10] - the exact result
+        of dividing a 0/10/.../100 slider position by 10.
+    """
+    raw = raw or {}
+    valid: dict[str, float] = {}
+    for item_id in TFI_ITEM_IDS:
+        v = raw.get(item_id)
+        if v is None or v == "":
+            continue
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            continue
+        if item_id in TFI_PERCENT_IDS:
+            if not (0 <= v <= 100) or v % 10 != 0:
+                continue
+        else:
+            if not (0 <= v <= 10) or v != int(v):
+                continue
+        valid[item_id] = _tfi_item_score(item_id, v)
+    return valid
+
+
+def score_tfi(raw: Mapping[str, Any] | None) -> ScoreResult:
+    """Tinnitus Functional Index - overall score and eight subscales.
+
+    The overall score is computed directly from the valid individual items,
+    never by averaging the eight subscale scores - the published instructions
+    explicitly warn against that shortcut, since a subscale's valid item count
+    can differ from the overall valid count. See `TFI_MIN_VALID_OVERALL` for
+    the omission rule and `TFI_SUBSCALE_MAX_OMITTED` for each subscale's.
+    """
+    valid = _tfi_valid_items(raw)
+    answered = len(valid)
+    is_valid = answered >= TFI_MIN_VALID_OVERALL
+
+    score = round(sum(valid.values()) / answered * 10) if is_valid else None
+
+    subscales: dict[str, Any] = {}
+    for name, ids in TFI_SUBSCALES.items():
+        got = {k: valid[k] for k in ids if k in valid}
+        sub_valid = len(got) >= len(ids) - TFI_SUBSCALE_MAX_OMITTED
+        subscales[name] = {
+            "score": round(sum(got.values()) / len(got) * 10) if sub_valid and got else None,
+            "answered": len(got),
+            "expected": len(ids),
+            "valid": sub_valid,
+        }
+
+    interpretation = ""
+    if not is_valid and answered > 0:
+        interpretation = TFI_INSUFFICIENT_MESSAGE
+
+    return ScoreResult(
+        instrument="TFI",
+        score=score,
+        max_score=100,
+        # No severity bands are published alongside the TFI scoring
+        # instructions supplied for this implementation, so none are invented
+        # here - the numeric score is reported on its own.
+        grade=None,
+        interpretation=interpretation,
+        answered=answered,
+        expected=len(TFI_ITEM_IDS),
+        subscales={**subscales, "min_valid_overall": TFI_MIN_VALID_OVERALL, "valid": is_valid},
+        prorated=False,
+        flags=[],
+    )
+
+
+# --------------------------------------------------------------------------- #
+# ISI - Insomnia Severity Index
+# --------------------------------------------------------------------------- #
+# Bastien CH, Vallieres A, Morin CM. Validation of the Insomnia Severity Index
+# as an outcome measure for insomnia research. Sleep Med. 2001;2(4):297-307.
+# Item text, response labels, item structure and the scoring/interpretation
+# ranges below are taken verbatim from the published ISI patient form -
+# nothing here is paraphrased, reordered or invented.
+#
+# The published form shows five *numbered* questions, but the first is a
+# grouped item with three independently-scored rows (difficulty falling
+# asleep / staying asleep / waking too early) - seven scored components in
+# total, each 0-4, summed to a 0-28 total. `ISI_QUESTION_PAGES` is what lets
+# the frontend show "Question 1 of 5" while still collecting three answers
+# on that one page - see `AboutYourTinnitus.tsx::groupItemsIntoPages`, which
+# groups consecutive items by their shared `group` key.
+ISI_SEVERITY_OPTIONS = [
+    {"label": "None", "value": 0},
+    {"label": "Mild", "value": 1},
+    {"label": "Moderate", "value": 2},
+    {"label": "Severe", "value": 3},
+    {"label": "Very severe", "value": 4},
+]
+# Item 2 is bipolar with only its two endpoints labelled in the published
+# form - values 1-3 are deliberately blank, not invented middle labels.
+ISI_Q2_OPTIONS = [
+    {"label": "Very Satisfied", "value": 0},
+    {"label": "", "value": 1},
+    {"label": "", "value": 2},
+    {"label": "", "value": 3},
+    {"label": "Very Dissatisfied", "value": 4},
+]
+ISI_Q3_OPTIONS = [
+    {"label": "Not at all Interfering", "value": 0},
+    {"label": "A Little", "value": 1},
+    {"label": "Somewhat", "value": 2},
+    {"label": "Much", "value": 3},
+    {"label": "Very Much Interfering", "value": 4},
+]
+ISI_Q4_OPTIONS = [
+    {"label": "Not at all Noticeable", "value": 0},
+    {"label": "Barely", "value": 1},
+    {"label": "Somewhat", "value": 2},
+    {"label": "Much", "value": 3},
+    {"label": "Very Much Noticeable", "value": 4},
+]
+ISI_Q5_OPTIONS = [
+    {"label": "Not at all", "value": 0},
+    {"label": "A Little", "value": 1},
+    {"label": "Somewhat", "value": 2},
+    {"label": "Much", "value": 3},
+    {"label": "Very Much", "value": 4},
+]
+
+ISI_ITEMS: list[dict[str, Any]] = [
+    {"id": "isi1a", "n": "1a", "group": "q1", "kind": "severity",
+     "context": "Please rate the current (i.e., last 2 weeks) SEVERITY of your insomnia problem(s).",
+     "text": "Difficulty falling asleep"},
+    {"id": "isi1b", "n": "1b", "group": "q1", "kind": "severity",
+     "context": "Please rate the current (i.e., last 2 weeks) SEVERITY of your insomnia problem(s).",
+     "text": "Difficulty staying asleep"},
+    {"id": "isi1c", "n": "1c", "group": "q1", "kind": "severity",
+     "context": "Please rate the current (i.e., last 2 weeks) SEVERITY of your insomnia problem(s).",
+     "text": "Problem waking up too early"},
+    {"id": "isi2", "n": 2, "group": "q2", "kind": "q2",
+     "text": "How SATISFIED/dissatisfied are you with your current sleep pattern?"},
+    {"id": "isi3", "n": 3, "group": "q3", "kind": "q3",
+     "text": "To what extent do you consider your sleep problem to INTERFERE with your daily "
+     "functioning (e.g. daytime fatigue, ability to function at work/daily chores, "
+     "concentration, memory, mood, etc.)?"},
+    {"id": "isi4", "n": 4, "group": "q4", "kind": "q4",
+     "text": "How NOTICEABLE to others do you think your sleeping problem is in terms of "
+     "impairing the quality of your life?"},
+    {"id": "isi5", "n": 5, "group": "q5", "kind": "q5",
+     "text": "How WORRIED/distressed are you about your current sleep problem?"},
+]
+ISI_ITEM_IDS = [i["id"] for i in ISI_ITEMS]
+
+# Which of the 7 scored components make up each of the 5 *displayed*
+# questions - the single source both the scorer's breakdown and the frontend
+# page-grouping key off.
+ISI_QUESTION_GROUPS: dict[int, list[str]] = {
+    1: ["isi1a", "isi1b", "isi1c"],
+    2: ["isi2"],
+    3: ["isi3"],
+    4: ["isi4"],
+    5: ["isi5"],
+}
+
+# (lower, upper, label) - the published interpretation bands. Nothing here is
+# an invented cut-point; the developers' own guidance is quoted verbatim.
+ISI_BANDS: list[tuple[int, int, str]] = [
+    (0, 7, "No clinically significant insomnia"),
+    (8, 14, "Subthreshold insomnia"),
+    (15, 21, "Clinical insomnia (moderate severity)"),
+    (22, 28, "Clinical insomnia (severe)"),
+]
+
+
+def _isi_band(score: int | None) -> str | None:
+    if score is None:
+        return None
+    for lo, hi, label in ISI_BANDS:
+        if lo <= score <= hi:
+            return label
+    return None
+
+
+def score_isi(raw: Mapping[str, Any] | None) -> ScoreResult:
+    """Insomnia Severity Index - all seven components, 0-28 total.
+
+    The published scoring instructions are "add scores for all seven items"
+    with no partial-completion allowance documented anywhere in the source,
+    so - unlike GAD-7/PSS-10, which prorate a mostly-complete long form -
+    this requires all seven valid before reporting a score at all. An
+    out-of-range, non-integer, or missing answer is dropped rather than
+    coerced, so a bad value counts as "not answered" and the total stays
+    unscored rather than quietly wrong.
+    """
+    raw = raw or {}
+    valid: dict[str, int] = {}
+    for item_id in ISI_ITEM_IDS:
+        v = raw.get(item_id)
+        if v is None or v == "":
+            continue
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= v <= 4 and v == int(v):
+            valid[item_id] = int(v)
+
+    answered = len(valid)
+    is_valid = answered == len(ISI_ITEM_IDS)
+    score = sum(valid.values()) if is_valid else None
+    grade = _isi_band(score)
+
+    # An optional, additive breakdown by displayed question - never used to
+    # derive the total, which always comes from the raw components above.
+    breakdown: dict[str, Any] = {}
+    for q, ids in ISI_QUESTION_GROUPS.items():
+        got = {k: valid[k] for k in ids if k in valid}
+        breakdown[f"q{q}"] = {
+            "score": sum(got.values()) if len(got) == len(ids) else None,
+            "max": len(ids) * 4,
+            "answered": len(got),
+            "expected": len(ids),
+        }
+
+    return ScoreResult(
+        instrument="ISI",
+        score=score,
+        max_score=28,
+        grade=grade,
+        interpretation=grade or "",
+        answered=answered,
+        expected=len(ISI_ITEM_IDS),
+        subscales={"breakdown": breakdown},
+        prorated=False,
+        flags=[],
+    )
+
+
+# --------------------------------------------------------------------------- #
+# PHQ-9 - Patient Health Questionnaire
+# --------------------------------------------------------------------------- #
+# Kroenke K, Spitzer RL, Williams JB. J Gen Intern Med. 2001;16(9):606-13. Item
+# text, response labels, the "last 2 weeks" timeframe and the functional-
+# difficulty item are taken verbatim from the published patient form.
+#
+# PHQ-2 (`PHQ2_ITEMS` above, administered as the stepped-protocol screener) is
+# literally the first two items of this form and shares their exact item ids
+# (`phq1`, `phq2`) - a patient who already answered the screener does not
+# answer those two again; see the `phq2_items` -> `phq9_items` merge in
+# `api/views.py::apply_submission`, the same pattern already used for
+# GAD-2 -> GAD-7 and PSS-4 -> PSS-10.
+PHQ9_ITEM_IDS = ["phq1", "phq2", "phq3", "phq4", "phq5", "phq6", "phq7", "phq8", "phq9"]
+# `kind: "phq9"` carries no per-item option_sets entry (all nine share the
+# same four `PHQ9_OPTIONS`) - it exists purely so the frontend's guided form
+# can pick the compact numbered-scale control over the large `.option`
+# button stack THI/GAD-7/PSS-10 use, without touching those instruments.
+PHQ9_ITEMS: list[dict[str, Any]] = [
+    {"id": "phq1", "n": 1, "kind": "phq9", "text": "Little interest or pleasure in doing things"},
+    {"id": "phq2", "n": 2, "kind": "phq9", "text": "Feeling down, depressed, or hopeless"},
+    {"id": "phq3", "n": 3, "kind": "phq9", "text": "Trouble falling or staying asleep, or sleeping too much"},
+    {"id": "phq4", "n": 4, "kind": "phq9", "text": "Feeling tired or having little energy"},
+    {"id": "phq5", "n": 5, "kind": "phq9", "text": "Poor appetite or overeating"},
+    {"id": "phq6", "n": 6, "kind": "phq9", "text": "Feeling bad about yourself — or that you are a failure or "
+     "have let yourself or your family down"},
+    {"id": "phq7", "n": 7, "kind": "phq9", "text": "Trouble concentrating on things, such as reading the "
+     "newspaper or watching television"},
+    {"id": "phq8", "n": 8, "kind": "phq9", "text": "Moving or speaking so slowly that other people could have "
+     "noticed? Or the opposite – being so fidgety or restless that you have been moving around a lot more "
+     "than usual"},
+    {"id": "phq9", "n": 9, "kind": "phq9", "text": "Thoughts that you would be better off dead or of hurting "
+     "yourself in some way"},
+]
+PHQ9_TIMEFRAME = "Over the last 2 weeks, how often have you been bothered by the following problems?"
+PHQ9_OPTIONS = [
+    {"label": "Not at all", "value": 0},
+    {"label": "Several days", "value": 1},
+    {"label": "More than half the days", "value": 2},
+    {"label": "Nearly every day", "value": 3},
+]
+
+# A separate, non-scored item shown after the 9 symptom questions - never the
+# form's "10th question" and never added to the 0-27 total (see `score_phq9`).
+PHQ9_FUNCTIONAL_DIFFICULTY_TEXT = (
+    "If you checked off any problems, how difficult have these problems made it for you to do "
+    "your work, take care of things at home, or get along with other people?"
+)
+PHQ9_FUNCTIONAL_DIFFICULTY_OPTIONS = [
+    {"label": "Not difficult at all", "value": 1},
+    {"label": "Somewhat difficult", "value": 2},
+    {"label": "Very difficult", "value": 3},
+    {"label": "Extremely difficult", "value": 4},
+]
+
+
+def score_phq9(raw: Mapping[str, Any] | None) -> ScoreResult:
+    """PHQ-9 - nine symptom items, summed directly to a 0-27 total.
+
+    No partial-completion allowance is documented for the PHQ-9 in the
+    supplied reference, so - matching the ISI - all nine are required before
+    a total is reported; a missing or out-of-range item is dropped rather
+    than coerced, never scored as zero.
+
+    Item 9 (thoughts of self-harm) is inspected independently of that
+    all-or-nothing gate: whether the patient endorsed it is a safety-relevant
+    fact regardless of whether the rest of the form is complete, and is
+    surfaced as a flag the same way THI's despair-item cluster already is
+    (see `score_thi`) so `clinical/redflags.py` can act on it without this
+    module knowing anything about triage.
+    """
+    raw = raw or {}
+    valid: dict[str, int] = {}
+    for item_id in PHQ9_ITEM_IDS:
+        v = raw.get(item_id)
+        if v is None or v == "":
+            continue
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= v <= 3 and v == int(v):
+            valid[item_id] = int(v)
+
+    answered = len(valid)
+    is_valid = answered == len(PHQ9_ITEM_IDS)
+    score = sum(valid.values()) if is_valid else None
+
+    flags: list[str] = []
+    item9 = valid.get("phq9")
+    if item9 is not None and item9 >= 1:
+        flags.append("item9_positive")
+
+    return ScoreResult(
+        instrument="PHQ-9",
+        score=score,
+        max_score=27,
+        # No validated severity bands exist anywhere in this codebase for the
+        # full PHQ-9 (only the PHQ-2 screener's own >=3 referral cut-point, a
+        # different, shorter instrument) - none is invented here; the numeric
+        # score is reported on its own, per the implementation brief.
+        grade=None,
+        interpretation="",
+        answered=answered,
+        expected=len(PHQ9_ITEM_IDS),
+        subscales={},
+        prorated=False,
+        flags=flags,
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Registry consumed by the frontend so item banks live in exactly one place
 # --------------------------------------------------------------------------- #
 INSTRUMENT_REGISTRY: dict[str, dict[str, Any]] = {
@@ -1039,6 +1582,49 @@ INSTRUMENT_REGISTRY: dict[str, dict[str, Any]] = {
         "items": VAS_SCALES,
         "max_score": 10,
     },
+    "tfi": {
+        "name": "Tinnitus Functional Index",
+        "abbrev": "TFI",
+        "citation": "Meikle MB, Henry JA, Griest SE, et al. Ear Hear. 2012;33(2):153-76. "
+        "Item bank and scoring: Oregon Health & Science University, 2008.",
+        "items": TFI_ITEMS,
+        "option_sets": {"percent": TFI_PERCENT_OPTIONS, "scale10": TFI_SCALE_OPTIONS},
+        "max_score": 100,
+        "subscales": list(TFI_SUBSCALES.keys()),
+        "min_valid_overall": TFI_MIN_VALID_OVERALL,
+    },
+    "isi": {
+        "name": "Insomnia Severity Index",
+        "abbrev": "ISI",
+        "citation": "Bastien CH, Vallieres A, Morin CM. Sleep Med. 2001;2(4):297-307.",
+        "items": ISI_ITEMS,
+        "option_sets": {
+            "severity": ISI_SEVERITY_OPTIONS,
+            "q2": ISI_Q2_OPTIONS,
+            "q3": ISI_Q3_OPTIONS,
+            "q4": ISI_Q4_OPTIONS,
+            "q5": ISI_Q5_OPTIONS,
+        },
+        "max_score": 28,
+        "bands": [{"lo": lo, "hi": hi, "label": label} for lo, hi, label in ISI_BANDS],
+        "question_groups": ISI_QUESTION_GROUPS,
+    },
+    "phq9": {
+        "name": "Patient Health Questionnaire-9",
+        "abbrev": "PHQ-9",
+        "citation": "Kroenke K, Spitzer RL, Williams JB. J Gen Intern Med. 2001;16(9):606-13.",
+        "items": PHQ9_ITEMS,
+        "options": PHQ9_OPTIONS,
+        "max_score": 27,
+        "timeframe": PHQ9_TIMEFRAME,
+        # The PHQ-2 *is* the first two PHQ-9 items - same twin-purpose
+        # metadata GAD-7/PSS-10 already carry for their own screeners.
+        "screener_key": "phq2",
+        "functional_difficulty": {
+            "text": PHQ9_FUNCTIONAL_DIFFICULTY_TEXT,
+            "options": PHQ9_FUNCTIONAL_DIFFICULTY_OPTIONS,
+        },
+    },
 }
 
 
@@ -1066,6 +1652,9 @@ def score_all(payload: Mapping[str, Any]) -> dict[str, Any]:
         "gad7": score_gad7(payload.get("gad7_items")).to_dict(),
         "pss10": score_pss10(payload.get("pss10_items")).to_dict(),
         "psqi": score_psqi(payload.get("psqi_items")).to_dict(),
+        "tfi": score_tfi(payload.get("tfi_items")).to_dict(),
+        "isi": score_isi(payload.get("isi_items")).to_dict(),
+        "phq9": score_phq9(payload.get("phq9_items")).to_dict(),
     }
     scores["escalations"] = escalation_plan(scores)
     return scores

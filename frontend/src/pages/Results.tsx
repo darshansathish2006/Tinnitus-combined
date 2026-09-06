@@ -69,6 +69,9 @@ import { InstrumentSectionForm, MODULE2_SECTIONS } from "./assessment/AboutYourT
 const MODULE2_ITEMS_FIELD: Record<string, string> = {
   vas: "vas",
   thi: "thi_items",
+  tfi: "tfi_items",
+  isi: "isi_items",
+  phq9: "phq9_items",
   gad7: "gad7_items",
   pss10: "pss10_items",
 };
@@ -218,7 +221,18 @@ export default function Results() {
     if (!activeId) return;
     const field = MODULE2_ITEMS_FIELD[domainKey];
     const body: Record<string, unknown> = { questionnaire_status: { [domainKey]: sectionStatus } };
-    if (sectionStatus === "completed" && field && items) body[field] = items;
+    if (sectionStatus === "completed" && field && items) {
+      // Same split as `Assessment.tsx::saveModule2Section` — the PHQ-9's
+      // functional-difficulty answer travels in the same `items` dict but is
+      // never one of the 9 scored symptom items.
+      const { phq9_functional_difficulty, ...scoredItems } = items as Record<string, number> & {
+        phq9_functional_difficulty?: number;
+      };
+      body[field] = scoredItems;
+      if (domainKey === "phq9" && phq9_functional_difficulty !== undefined) {
+        body.phq9_functional_difficulty = phq9_functional_difficulty;
+      }
+    }
     setCompletingSaving(true);
     try {
       await api.assessments.save(activeId, body);

@@ -156,12 +156,8 @@ export default function Assessment() {
    */
   const [characters, setCharacters] = useState<string[]>([CHARACTER_OPTIONS[0]]);
   const [laterality, setLaterality] = useState<"left" | "right" | "both" | "central">("both");
-  const [onsetMonths, setOnsetMonths] = useState(12);
   const [pulsatile, setPulsatile] = useState(false);
-  const [somatic, setSomatic] = useState(false);
-  const [hyperacusis, setHyperacusis] = useState(false);
   const [hearingAids, setHearingAids] = useState(false);
-  const [noiseYears, setNoiseYears] = useState(0);
   const [comorbidities, setComorbidities] = useState<string[]>([]);
   const [medications, setMedications] = useState("");
   const [consent, setConsent] = useState(false);
@@ -193,12 +189,8 @@ export default function Assessment() {
     if (p.tinnitus_characters?.length) setCharacters(p.tinnitus_characters);
     else if (p.tinnitus_character) setCharacters([p.tinnitus_character]);
     if (p.laterality) setLaterality(p.laterality as typeof laterality);
-    if (p.duration_months) setOnsetMonths(Math.round(p.duration_months));
     setPulsatile(p.pulsatile);
-    setSomatic(p.somatic_modulation);
-    setHyperacusis(p.hyperacusis);
     setHearingAids(p.hearing_aid_use);
-    setNoiseYears(p.noise_exposure_years ?? 0);
     setComorbidities(p.comorbidities ?? []);
     setMedications((p.medications ?? []).join(", "));
     setConsent(p.consent_research);
@@ -288,20 +280,22 @@ export default function Assessment() {
   async function submitIntake() {
     setSaving(true);
     try {
-      const onsetDate = new Date();
-      onsetDate.setMonth(onsetDate.getMonth() - onsetMonths);
       await api.patients.updateMe({
         // Both are sent, but the server derives the primary from the list so the
         // two cannot disagree — see `PatientProfileUpdateSerializer.update`.
         tinnitus_character: characters[0] ?? "",
         tinnitus_characters: characters,
         laterality,
-        onset_date: onsetDate.toISOString().slice(0, 10),
         pulsatile,
-        somatic_modulation: somatic,
-        hyperacusis,
         hearing_aid_use: hearingAids,
-        noise_exposure_years: noiseYears,
+        // `onset_date`, `somatic_modulation`, `hyperacusis` and
+        // `noise_exposure_years` are deliberately not sent here any more —
+        // Module 1 no longer asks the duration slider, the jaw/neck and
+        // everyday-sounds checkboxes, or the noise-exposure slider that used
+        // to set them. `PATCH .../patients/me` is a partial update
+        // (`partial=True`), so omitting these keys leaves whatever value is
+        // already on record untouched rather than overwriting it with a
+        // fresh default — no historical answer is lost or reset.
         comorbidities,
         medications: medications.split(",").map((m) => m.trim()).filter(Boolean),
         consent_research: consent,
@@ -405,19 +399,22 @@ export default function Assessment() {
   }
 
   /**
-   * "About Your Tinnitus" (Module 2) — VAS, THI, GAD-7 and PSS-10 are each
-   * saved the moment their section is answered or skipped, rather than held in
-   * memory for one save at the end. A patient who stops partway through this
-   * module still has every section they did finish on the record, and a
-   * skipped section is recorded as skipped immediately rather than only if
-   * they happen to reach the last section. TFI/ISI/PHQ-9/EQ-5D-5L are not
-   * saved here at all — those sections have no item content to save (see
-   * `AboutYourTinnitus`) and are never represented as skipped, since nothing
+   * "About Your Tinnitus" (Module 2) — VAS, THI, TFI, ISI, GAD-7, PHQ-9 and
+   * PSS-10 are each saved the moment their section is answered or skipped,
+   * rather than held in memory for one save at the end. A patient who stops
+   * partway through this module still has every section they did finish on
+   * the record, and a skipped section is recorded as skipped immediately
+   * rather than only if they happen to reach the last section. EQ-5D-5L is
+   * not saved here at all — that section has no item content to save (see
+   * `AboutYourTinnitus`) and is never represented as skipped, since nothing
    * was actually offered and declined.
    */
   const MODULE2_ITEMS_FIELD: Record<string, string> = {
     vas: "vas",
     thi: "thi_items",
+    tfi: "tfi_items",
+    isi: "isi_items",
+    phq9: "phq9_items",
     gad7: "gad7_items",
     pss10: "pss10_items",
   };
@@ -429,7 +426,20 @@ export default function Assessment() {
   ) {
     const field = MODULE2_ITEMS_FIELD[domainKey];
     const body: Record<string, unknown> = { questionnaire_status: { [domainKey]: sectionStatus } };
-    if (sectionStatus === "completed" && field && items) body[field] = items;
+    if (sectionStatus === "completed" && field && items) {
+      // The PHQ-9's separate, non-scored functional-difficulty answer travels
+      // in the same `items` dict (see `AboutYourTinnitus`'s
+      // `PhqFunctionalDifficultyStep`) but is never part of `phq9_items` —
+      // split it out to its own field so it can never be mistaken for a
+      // 10th scored PHQ-9 item.
+      const { phq9_functional_difficulty, ...scoredItems } = items as Record<string, number> & {
+        phq9_functional_difficulty?: number;
+      };
+      body[field] = scoredItems;
+      if (domainKey === "phq9" && phq9_functional_difficulty !== undefined) {
+        body.phq9_functional_difficulty = phq9_functional_difficulty;
+      }
+    }
     try {
       await saveModule(body, sectionStatus === "completed" ? [domainKey] : []);
     } catch (error) {
@@ -696,63 +706,6 @@ export default function Assessment() {
                 </Panel>
               )}
 
-              <Field
-                label={t("assessment.intake.duration", { value: fmt.months(onsetMonths) })}
-                hint={t("assessment.intake.durationHint")}
-              >
-                <input
-                  className="fader"
-                  type="range"
-                  min={1}
-                  max={240}
-                  value={onsetMonths}
-                  onChange={(e) => setOnsetMonths(Number(e.target.value))}
-                />
-              </Field>
-
-              <div className="stack stack-2">
-                <span className="label">{t("assessment.intake.applies")}</span>
-                <div className="stack stack-2">
-                  {(
-                    [
-                      [somatic, setSomatic, "somatic", true],
-                      [hyperacusis, setHyperacusis, "hyperacusis", true],
-                    ] as const
-                  ).map(([value, setter, key, hasHelp]) => (
-                    <label key={key} className="option" style={{ cursor: "pointer" }}>
-                      <input
-                        type="checkbox"
-                        checked={value as boolean}
-                        onChange={(e) => (setter as (v: boolean) => void)(e.target.checked)}
-                        style={{ accentColor: "var(--signal)", width: 16, height: 16 }}
-                      />
-                      <span style={{ minWidth: 0 }}>
-                        <span style={{ display: "block" }}>{t(`assessment.intake.${key}`)}</span>
-                        {hasHelp && (
-                          <span className="meta" style={{ display: "block" }}>
-                            {t(`assessment.intake.${key}Help`)}
-                          </span>
-                        )}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <Field
-                label={t("assessment.intake.noiseYears", { value: noiseYears })}
-                hint={t("assessment.intake.noiseYearsHint")}
-              >
-                <input
-                  className="fader fader--data"
-                  type="range"
-                  min={0}
-                  max={45}
-                  value={noiseYears}
-                  onChange={(e) => setNoiseYears(Number(e.target.value))}
-                />
-              </Field>
-
               <Disclosure
                 summary={t("assessment.intake.historyDisclosure")}
                 count={comorbidities.length}
@@ -850,6 +803,9 @@ export default function Assessment() {
                 : {}),
             },
             thi_items: assessment?.thi_items ?? undefined,
+            tfi_items: assessment?.tfi_items ?? undefined,
+            isi_items: assessment?.isi_items ?? undefined,
+            phq9_items: assessment?.phq9_items ?? undefined,
             gad7_items: assessment?.gad7_items ?? undefined,
             pss10_items: assessment?.pss10_items ?? undefined,
             questionnaire_status: assessment?.questionnaire_status,

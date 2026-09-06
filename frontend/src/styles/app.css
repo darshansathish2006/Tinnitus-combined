@@ -585,6 +585,66 @@ code, kbd, .mono {
   margin-top: 2px;
 }
 
+/* An 11-position fader (0/10/.../100) that shows every tick label, not just
+   the two endpoints — used by the TFI slider. Wraps onto a second line
+   rather than overlapping on a narrow viewport, since the labels are not
+   individually clickable and reflowing them costs nothing. */
+.fader-ticks {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  column-gap: var(--s2);
+  row-gap: 2px;
+  font-size: var(--fs-micro);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+/* A compact numbered scale — small round buttons rather than the full-width
+   `.option` rows every other questionnaire here uses, per each brief's
+   explicit "resemble the PDF's numbered scale, not large cards" requirement.
+   Used by the ISI's 0-4 items and the PHQ-9's 0-3 items. */
+.numberedscale { display: flex; gap: var(--s2); flex-wrap: wrap; }
+.numberedscale__value {
+  flex: 1 1 0;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: var(--s2) var(--s1);
+  background: var(--paper-raised);
+  border: var(--hairline) solid var(--ink);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+.numberedscale__value:hover { transform: translate(-1px, -1px); box-shadow: 2px 2px 0 var(--ink); }
+.numberedscale__value:disabled { opacity: 0.5; cursor: not-allowed; }
+.numberedscale__value[aria-pressed="true"] {
+  background: var(--signal);
+  border-color: var(--signal);
+  box-shadow: var(--shadow-sm);
+}
+.numberedscale__number {
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: var(--fs-lead);
+  line-height: 1;
+  color: var(--ink);
+}
+.numberedscale__value[aria-pressed="true"] .numberedscale__number { color: var(--on-signal); }
+.numberedscale__label {
+  font-size: var(--fs-micro);
+  line-height: 1.15;
+  text-align: center;
+  color: var(--ink-3);
+}
+.numberedscale__value[aria-pressed="true"] .numberedscale__label { color: var(--on-signal-2); }
+
 .option {
   display: flex;
   align-items: center;

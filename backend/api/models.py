@@ -407,6 +407,33 @@ class Assessment(models.Model):
     phq2_items = models.JSONField(default=dict, blank=True)
     phq2_score = models.IntegerField(null=True, blank=True)
 
+    # Tinnitus Functional Index — raw per-item answers only (percentage as
+    # given for items 1 and 3, 0-10 for every other item). No persisted score
+    # column: unlike THI/GAD-7/PSS-10, the TFI does not yet feed the triage
+    # dashboard, trend charts or the research CSV export, so a `tfi_score`
+    # convenience column would just be dead weight — `score_tfi()` in
+    # `clinical/instruments.py` computes the overall and subscale scores fresh
+    # from these items every time a report is built.
+    tfi_items = models.JSONField(default=dict, blank=True)
+
+    # Insomnia Severity Index — raw per-component answers (isi1a/isi1b/isi1c
+    # for the published form's grouped item 1, isi2..isi5 for the rest), each
+    # 0-4. No persisted score column, for the same reason as the TFI above:
+    # `score_isi()` computes the 0-28 total fresh from these items.
+    isi_items = models.JSONField(default=dict, blank=True)
+
+    # Patient Health Questionnaire-9 — raw per-item answers (phq1..phq9,
+    # 0-3 each). Shares its first two item ids with the pre-existing
+    # `phq2_items` screener (which is left untouched — see the merge in
+    # `apply_submission`), the same way `gad7_items` absorbs `gad2_items` and
+    # `pss10_items` absorbs `pss4_items`. No persisted score column, for the
+    # same reason as the TFI/ISI above.
+    phq9_items = models.JSONField(default=dict, blank=True)
+    # The form's separate, non-scored functional-difficulty item — never part
+    # of the 0-27 symptom total, stored on its own so it can never be
+    # mistaken for a 10th PHQ-9 question.
+    phq9_functional_difficulty = models.IntegerField(null=True, blank=True)
+
     # Short-form screeners administered first under the stepped protocol.
     gad2_score = models.IntegerField(null=True, blank=True)
     pss4_score = models.IntegerField(null=True, blank=True)
@@ -414,14 +441,15 @@ class Assessment(models.Model):
     escalated_instruments = models.JSONField(default=list, blank=True)
 
     # Per-instrument completion state for the "About Your Tinnitus" module
-    # (VAS, THI, GAD-7, PSS-10 — the four instruments that module actually
-    # administers). {"thi": "completed", "gad7": "skipped", ...}; a key absent
-    # from this dict means "not_started". Deliberately separate from whether a
-    # *score* is present: a skipped instrument must never be represented by a
-    # null score alone, because a null score is also what "not started" and
-    # "not yet asked" look like, and the three are different clinical facts
-    # (declined vs pending vs never offered). This is the only new state the
-    # skip feature needs — scores stay in the columns above and stay nullable.
+    # (VAS, THI, TFI, ISI, GAD-7, PHQ-9, PSS-10 — the instruments that module
+    # actually administers in full). {"thi": "completed", "gad7": "skipped", ...}; a key
+    # absent from this dict means "not_started". Deliberately separate from
+    # whether a *score* is present: a skipped instrument must never be
+    # represented by a null score alone, because a null score is also what
+    # "not started" and "not yet asked" look like, and the three are different
+    # clinical facts (declined vs pending vs never offered). This is the only
+    # new state the skip feature needs — scores stay in the columns above (or,
+    # for TFI/ISI/PHQ-9, are computed fresh from their `*_items`) and stay nullable.
     questionnaire_status = models.JSONField(default=dict, blank=True)
 
     # -- derived composite metrics ------------------------------------------ #

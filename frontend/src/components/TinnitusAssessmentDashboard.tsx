@@ -181,9 +181,11 @@ interface Module2DomainStatus {
 
 function AboutYourTinnitusCard({
   report,
+  activeAssessment,
   onCompleteInstrument,
 }: {
   report: any;
+  activeAssessment?: Assessment | null;
   onCompleteInstrument(domainKey: string): void;
 }) {
   const { t } = useTranslation();
@@ -198,6 +200,24 @@ function AboutYourTinnitusCard({
     { label: t("results.dashboard.vasAnnoyance", "Annoyance"), value: vas.vas_annoyance ?? null },
     { label: t("results.dashboard.vasAwareness", "Awareness"), value: vas.vas_awareness ?? null },
     { label: t("results.dashboard.vasSleep", "Sleep impact"), value: vas.vas_sleep_interference ?? null },
+  ];
+
+  // The TFI's 8 published subscales — from `score_tfi()` via
+  // `report.questionnaires.tfi.subscales`, never recomputed here. A subscale
+  // is shown only when the server marked it `valid` (no more than one missing
+  // item); otherwise the row says so rather than displaying a misleading
+  // number, matching how the overall score already behaves when the
+  // >=19-of-25 rule is not met.
+  const tfiSubscales = report?.questionnaires?.tfi?.subscales ?? {};
+  const TFI_SUBSCALE_LABELS: [string, string][] = [
+    ["intrusive", t("results.dashboard.tfiIntrusive", "Intrusive")],
+    ["sense_of_control", t("results.dashboard.tfiSenseOfControl", "Sense of Control")],
+    ["cognitive", t("results.dashboard.tfiCognitive", "Cognitive")],
+    ["sleep", t("results.dashboard.tfiSleep", "Sleep")],
+    ["auditory", t("results.dashboard.tfiAuditory", "Auditory")],
+    ["relaxation", t("results.dashboard.tfiRelaxation", "Relaxation")],
+    ["quality_of_life", t("results.dashboard.tfiQualityOfLife", "Quality of Life")],
+    ["emotional", t("results.dashboard.tfiEmotional", "Emotional")],
   ];
 
   return (
@@ -230,11 +250,55 @@ function AboutYourTinnitusCard({
                 ))}
               </div>
             ) : d.available ? (
-              <div className="row row--between row--baseline">
-                <span className="mono" style={{ fontWeight: 700, fontSize: "var(--fs-lead)" }}>
-                  {d.score}
-                </span>
-                {d.grade && <span className="meta">{d.grade}</span>}
+              <div className="stack stack-3">
+                <div className="row row--between row--baseline">
+                  <span className="mono" style={{ fontWeight: 700, fontSize: "var(--fs-lead)" }}>
+                    {d.score}
+                    {d.key === "tfi" && " / 100"}
+                    {d.key === "phq9" && " / 27"}
+                  </span>
+                  {d.grade && <span className="meta">{d.grade}</span>}
+                </div>
+                {d.key === "phq9" && activeAssessment?.phq9_functional_difficulty != null && (
+                  <div className="stack stack-1">
+                    <span className="label">
+                      {t("results.dashboard.phqFunctionalDifficulty", "Functional difficulty")}
+                    </span>
+                    <span className="meta">
+                      {
+                        (
+                          {
+                            1: t("results.dashboard.phqFunctional1", "Not difficult at all"),
+                            2: t("results.dashboard.phqFunctional2", "Somewhat difficult"),
+                            3: t("results.dashboard.phqFunctional3", "Very difficult"),
+                            4: t("results.dashboard.phqFunctional4", "Extremely difficult"),
+                          } as Record<number, string>
+                        )[activeAssessment.phq9_functional_difficulty]
+                      }
+                    </span>
+                  </div>
+                )}
+                {d.key === "tfi" && (
+                  <div className="grid grid-4" style={{ gap: "var(--s3)" }}>
+                    {TFI_SUBSCALE_LABELS.map(([key, label]) => {
+                      const sub = tfiSubscales[key] ?? {};
+                      return (
+                        <div key={key} className="stack stack-1">
+                          <span className="label">{label}</span>
+                          {sub.valid && typeof sub.score === "number" ? (
+                            <span className="mono" style={{ fontWeight: 700 }}>
+                              {sub.score} / 100
+                            </span>
+                          ) : (
+                            <span className="meta dim">
+                              {t("results.dashboard.notEnoughResponses", "Not enough valid responses")}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="stack stack-2">
@@ -689,7 +753,11 @@ export function TinnitusAssessmentDashboard({
       </div>
 
       <OverallProfileCard report={report} />
-      <AboutYourTinnitusCard report={report} onCompleteInstrument={onCompleteInstrument ?? (() => {})} />
+      <AboutYourTinnitusCard
+        report={report}
+        activeAssessment={activeAssessment}
+        onCompleteInstrument={onCompleteInstrument ?? (() => {})}
+      />
       <RightNowCard report={report} />
       <AudiogramCard report={report} />
       <PsychoacousticProfileCard report={report} />

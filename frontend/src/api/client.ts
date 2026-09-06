@@ -474,6 +474,20 @@ export interface Assessment {
    *  handicap score down by domain (sleep/concentration/daily activities) on
    *  the plain results dashboard — see `FunctionalImpactCard`. */
   thi_items?: Record<string, number> | null;
+  /** Raw per-item TFI responses ("tfi1": 70, "tfi2": 6, ...) — the percentage
+   *  items (1, 3) stored as the percentage itself, never pre-divided. Scored
+   *  server-side by `score_tfi()`; nothing here is computed on the client. */
+  tfi_items?: Record<string, number> | null;
+  /** Raw per-component ISI responses ("isi1a": 3, "isi2": 2, ...), 0-4 each.
+   *  Scored server-side by `score_isi()`. */
+  isi_items?: Record<string, number> | null;
+  /** Raw per-item PHQ-9 responses ("phq1": 1, ..., "phq9": 0), 0-3 each.
+   *  Shares its first two item ids with the pre-existing `phq2_items`
+   *  screener. Scored server-side by `score_phq9()`. */
+  phq9_items?: Record<string, number> | null;
+  /** The PHQ-9's separate, non-scored functional-difficulty response (1-4) —
+   *  never part of the 0-27 symptom total. */
+  phq9_functional_difficulty?: number | null;
   vas_loudness: number | null;
   vas_annoyance: number | null;
   vas_awareness: number | null;

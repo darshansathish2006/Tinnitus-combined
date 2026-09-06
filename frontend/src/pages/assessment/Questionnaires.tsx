@@ -68,6 +68,29 @@ export function anchorLabel(t: TFunction, label: string | undefined, fallback: s
   return t(`instruments.vasAnchors.${label}`, { defaultValue: label });
 }
 
+/**
+ * Which response options apply to one item.
+ *
+ * Almost every instrument shares one option set across all its items (THI's
+ * No/Sometimes/Yes, GAD-7's four-point frequency scale, ...). A few — PSQI,
+ * and now the TFI — mix response types within the same instrument (a time,
+ * a duration in minutes, a 0-3 frequency; or the TFI's percentage items
+ * alongside its 0-10 items), so `option_sets` on the registry entry maps each
+ * item's own `kind` to its options, and this is checked first. Falls back to
+ * the instrument's single shared `options` list otherwise — unchanged
+ * behaviour for every instrument that has never needed `kind`/`option_sets`.
+ */
+export function resolveItemOptions(
+  instruments: Record<string, InstrumentSpec> | null | undefined,
+  instrumentKey: string,
+  item: Item
+): Option[] {
+  const instrument = instruments?.[instrumentKey];
+  if (!instrument) return [];
+  if (instrument.option_sets && item.kind) return instrument.option_sets[item.kind] ?? [];
+  return instrument.options ?? [];
+}
+
 export interface Option {
   label: string;
   value: number;
@@ -82,6 +105,17 @@ export interface Item {
   label?: string;
   low?: string;
   high?: string;
+  /** A shared instruction line the paper form prints once above a group of
+   *  items (e.g. the TFI's "Over the PAST WEEK..." headers) — repeated here
+   *  per item so it is not lost when items are shown one at a time. */
+  context?: string;
+  /** Marks items that belong together as one displayed/navigated question —
+   *  e.g. the ISI's grouped item 1, where `isi1a`/`isi1b`/`isi1c` all carry
+   *  `group: "q1"`. Consecutive items sharing a `group` are shown and
+   *  answered together; see `AboutYourTinnitus.tsx::groupItemsIntoPages`.
+   *  Absent (the default) means the item is its own page, unchanged from
+   *  every instrument that predates this field. */
+  group?: string;
 }
 
 export interface InstrumentSpec {
@@ -98,6 +132,9 @@ export interface InstrumentSpec {
   screener_key?: string;
   /** The full published item bank, for instruments the client also has a short form of (THI). */
   long_form_items?: Item[];
+  /** The PHQ-9's separate, non-scored functional-difficulty item — never one
+   *  of `items`, never part of the 0-27 total. */
+  functional_difficulty?: { text: string; options: Option[] };
 }
 
 export interface QuestionnaireResult {
@@ -295,12 +332,8 @@ export default function Questionnaires({
     if (!sequence.includes(current)) setCurrent(sequence[0]);
   }, [sequence, current]);
 
-  function optionsFor(instrumentKey: string, currentItem: Item): Option[] {
-    const instrument = instruments?.[instrumentKey];
-    if (!instrument) return [];
-    if (instrument.option_sets && currentItem.kind) return instrument.option_sets[currentItem.kind] ?? [];
-    return instrument.options ?? [];
-  }
+  const optionsFor = (instrumentKey: string, currentItem: Item): Option[] =>
+    resolveItemOptions(instruments, instrumentKey, currentItem);
 
   function answer(value: number | string) {
     if (!item) return;

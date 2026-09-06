@@ -104,6 +104,20 @@ def assessment_dict(assessment: Any) -> dict[str, Any]:
         "thi_score": assessment.thi_score,
         "thi_grade": assessment.thi_grade,
         "thi_subscales": assessment.thi_subscales or {},
+        # No persisted score/grade columns for the TFI (see the model) — its
+        # overall and subscale scores are computed fresh by `score_tfi()` on
+        # every call from these raw items alone.
+        "tfi_items": assessment.tfi_items or {},
+        # Same story as TFI above: `score_isi()` computes the 0-28 total
+        # fresh from these items on every call, no persisted score column.
+        "isi_items": assessment.isi_items or {},
+        # Same again for the PHQ-9's 0-27 total. `phq2_items` below (the
+        # pre-existing screener) is untouched and still scored on its own —
+        # `apply_submission` additionally merges it into `phq9_items` so a
+        # patient who already answered the screener does not repeat those
+        # two items, exactly as `gad2_items` merges into `gad7_items`.
+        "phq9_items": assessment.phq9_items or {},
+        "phq9_functional_difficulty": assessment.phq9_functional_difficulty,
         "vas_loudness": assessment.vas_loudness,
         "vas_annoyance": assessment.vas_annoyance,
         "vas_awareness": assessment.vas_awareness,

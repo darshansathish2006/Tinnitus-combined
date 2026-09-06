@@ -737,6 +737,7 @@ def apply_submission(assessment: Assessment, data: dict[str, Any]) -> None:
         "ri_stimulus_frequency_hz", "ri_stimulus_level_db", "ri_stimulation_duration_s",
         "ri_stimulation_started_at", "ri_stimulation_stopped_at",
         "ri_reduction_detected_at", "ri_return_to_baseline_at", "ri_repeated",
+        "phq9_functional_difficulty",
     ):
         if field in data:
             setattr(assessment, field, data[field])
@@ -764,7 +765,9 @@ def apply_submission(assessment: Assessment, data: dict[str, Any]) -> None:
 
     # Questionnaire item banks merge, so a patient can answer across sittings and
     # so a GAD-7 escalation adds to the GAD-2 items already stored.
-    for field in ("thi_items", "psqi_items", "pss10_items", "gad7_items", "phq2_items"):
+    for field in (
+        "thi_items", "tfi_items", "isi_items", "phq9_items", "psqi_items", "pss10_items", "gad7_items", "phq2_items"
+    ):
         if field in data:
             setattr(assessment, field, {**(getattr(assessment, field) or {}), **data[field]})
     # Short forms are subsets of their long forms, so they merge into the same bank.
@@ -772,6 +775,8 @@ def apply_submission(assessment: Assessment, data: dict[str, Any]) -> None:
         assessment.gad7_items = {**(assessment.gad7_items or {}), **data["gad2_items"]}
     if "pss4_items" in data:
         assessment.pss10_items = {**(assessment.pss10_items or {}), **data["pss4_items"]}
+    if "phq2_items" in data:
+        assessment.phq9_items = {**(assessment.phq9_items or {}), **data["phq2_items"]}
     if "sleep_screen_items" in data:
         raw = data["sleep_screen_items"].get("sleep_screen")
         if raw is not None:
@@ -953,26 +958,29 @@ def assessment_detail(request, assessment_id: int):
 # "About Your Tinnitus" module — the 8 result categories the Results page must
 # report on, and why each one is or is not available.
 #
-# Four instruments (VAS, THI, GAD-7, PSS-10) are fully implemented and scored by
-# `score_all`. The other four (TFI, ISI, PHQ-9, EQ-5D-5L) have no validated item
-# content anywhere in this codebase — per an explicit product decision, they are
-# shown as honestly unavailable rather than approximated, invented, or silently
-# dropped. This list is the single source of truth both `report_clinical` and
-# the frontend Results page key off, so the two can never describe a category
-# differently.
+# Seven instruments (VAS, THI, TFI, ISI, GAD-7, PHQ-9, PSS-10) are fully
+# implemented and scored by `score_all`. The remaining one (EQ-5D-5L) has no
+# validated item content anywhere in this codebase — per an explicit product
+# decision, it is shown as honestly unavailable rather than approximated,
+# invented, or silently dropped. This list is the single source of truth both
+# `report_clinical` and the frontend Results page key off, so the two can
+# never describe a category differently.
 #: The only fields a PATCH may touch once an assessment is finalised — see the
 #: guard in `assessment_detail`. Everything else stays locked after finalise.
 POST_COMPLETE_EDITABLE_FIELDS = frozenset(
-    {"thi_items", "vas", "gad7_items", "pss10_items", "questionnaire_status"}
+    {
+        "thi_items", "tfi_items", "isi_items", "phq9_items", "phq9_functional_difficulty",
+        "vas", "gad7_items", "pss10_items", "questionnaire_status",
+    }
 )
 
 MODULE2_DOMAINS: list[dict[str, str]] = [
     {"key": "vas", "category": "Tinnitus Severity", "instrument": "VAS / NRS", "kind": "real"},
     {"key": "thi", "category": "Tinnitus Handicap", "instrument": "THI", "kind": "real"},
-    {"key": "tfi", "category": "Tinnitus Functional Impact", "instrument": "TFI", "kind": "stub"},
-    {"key": "isi", "category": "Sleep & Insomnia", "instrument": "ISI", "kind": "stub"},
+    {"key": "tfi", "category": "Tinnitus Functional Impact", "instrument": "TFI", "kind": "real"},
+    {"key": "isi", "category": "Sleep & Insomnia", "instrument": "ISI", "kind": "real"},
     {"key": "gad7", "category": "Anxiety", "instrument": "GAD-7", "kind": "real"},
-    {"key": "phq9", "category": "Mood / Depression", "instrument": "PHQ-9", "kind": "stub"},
+    {"key": "phq9", "category": "Mood / Depression", "instrument": "PHQ-9", "kind": "real"},
     {"key": "pss10", "category": "Perceived Stress", "instrument": "PSS", "kind": "real"},
     {"key": "eq5d5l", "category": "Health-Related Quality of Life", "instrument": "EQ-5D-5L", "kind": "stub"},
 ]
@@ -1029,6 +1037,12 @@ def module2_status(assessment: Assessment, scores: dict[str, Any]) -> list[dict[
                 reason = f"{domain['instrument']} was skipped."
             elif status == "in_progress":
                 reason = f"{domain['instrument']} was started but not finished."
+            elif status == "completed":
+                # Answered, but not enough valid items to score (the TFI's
+                # >=19-of-25 rule is the only instrument that can hit this
+                # today) — a distinct fact from "not completed", and must
+                # never be reported as if nothing was done.
+                reason = f"{domain['instrument']} does not have enough valid responses to calculate a score."
             else:
                 reason = f"{domain['instrument']} has not been completed yet."
 
