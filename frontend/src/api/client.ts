@@ -492,6 +492,9 @@ export interface Assessment {
   vas_annoyance: number | null;
   vas_awareness: number | null;
   vas_sleep_interference: number | null;
+  /** The 0-10 pain faces rating asked after the four scales above — its own
+   *  answer, never part of the tinnitus severity block. */
+  vas_pain?: number | null;
   psqi_score: number | null;
   psqi_grade: string | null;
   pss10_score: number | null;

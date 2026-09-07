@@ -134,6 +134,11 @@ def assessment_dict(assessment: Any) -> dict[str, Any]:
             "vas_awareness": assessment.vas_awareness,
             "vas_sleep_interference": assessment.vas_sleep_interference,
         },
+        # The pain faces scale, asked after those four and scored separately by
+        # `score_pain_vas()` - deliberately outside "vas" above, so the four
+        # tinnitus ratings keep meaning exactly what they meant before it
+        # existed. Unanswered stays None all the way to the report.
+        "vas_pain": assessment.vas_pain,
         "psqi_items": assessment.psqi_items or {},
         "psqi_score": assessment.psqi_score,
         "pss10_items": assessment.pss10_items or {},

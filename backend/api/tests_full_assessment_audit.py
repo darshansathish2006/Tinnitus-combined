@@ -99,6 +99,62 @@ class ThiGad7Pss10VasApiTests(TestCase):
         self.assertEqual(patched.status_code, 200)
         self.assertEqual(patched.json()["vas_loudness"], 0.0)
 
+    def test_pain_vas_is_scored_beside_the_four_scales_never_inside_them(self):
+        # The pain faces scale is a separate question asked after the four
+        # tinnitus VAS scales, so it has to reach the report on its own terms
+        # and the tinnitus severity block has to still be exactly four keys -
+        # folding a pain rating into them would change what those four numbers
+        # mean to every consumer of the report.
+        vas = {"vas_loudness": 7, "vas_annoyance": 6, "vas_awareness": 5, "vas_sleep_interference": 4}
+        patched = self._patch({"vas": vas, "vas_pain": 8, "questionnaire_status": {"vas": "completed"}})
+        self.assertEqual(patched.status_code, 200)
+        self.assertEqual(patched.json()["vas_pain"], 8.0)
+        self.assertEqual(self._finalise().status_code, 200)
+        report = self._report().json()
+        self.assertEqual(
+            sorted(report["questionnaires"]["vas"]),
+            ["vas_annoyance", "vas_awareness", "vas_loudness", "vas_sleep_interference"],
+        )
+        pain = report["questionnaires"]["vas_pain"]
+        self.assertEqual(pain["score"], 8.0)
+        self.assertEqual(pain["band"], "severe")
+        self.assertIn("major impact", pain["interpretation"])
+
+    def test_pain_vas_bands_follow_the_printed_correlation(self):
+        # The correlation printed on the scale itself: 1-3 mild (minimal ADL
+        # impact), 4-6 moderate, 7-10 severe. 0 is its own band, not "mild".
+        self.assertEqual(self._finalise().status_code, 200)
+        for value, band in [(0, "none"), (1, "mild"), (3, "mild"), (4, "moderate"),
+                            (6, "moderate"), (7, "severe"), (10, "severe")]:
+            self.assertEqual(self._patch({"vas_pain": value}).status_code, 200, value)
+            self.assertEqual(self._report().json()["questionnaires"]["vas_pain"]["band"], band, value)
+
+    def test_pain_vas_zero_is_a_real_answer_and_unanswered_is_not_a_zero(self):
+        self.assertEqual(self._finalise().status_code, 200)
+        unanswered = self._report().json()["questionnaires"]["vas_pain"]
+        self.assertIsNone(unanswered["score"])
+        self.assertIsNone(unanswered["band"])
+        self.assertEqual(self._patch({"vas_pain": 0}).status_code, 200)
+        answered = self._report().json()["questionnaires"]["vas_pain"]
+        self.assertEqual(answered["score"], 0.0)
+        self.assertEqual(answered["band"], "none")
+
+    def test_pain_vas_rejects_ratings_off_the_scale(self):
+        self.assertEqual(self._patch({"vas_pain": 11}).status_code, 400)
+        self.assertEqual(self._patch({"vas_pain": -1}).status_code, 400)
+
+    def test_pain_scale_is_published_on_the_vas_registry_entry(self):
+        # The client draws the faces, the ruler and the verbal scale from this,
+        # so an assessment run against a server that has it and a client that
+        # does not must degrade to "no pain question", never to a made-up one.
+        registry = self.client.get("/api/assessments/instruments").json()["instruments"]
+        pain = registry["vas"]["pain_scale"]
+        self.assertEqual(pain["id"], "vas_pain")
+        self.assertEqual([0, 2, 4, 6, 8, 10], pain["face_values"])
+        self.assertEqual([b["key"] for b in pain["bands"]], ["none", "mild", "moderate", "severe"])
+        # The pain question is never one of the four scored tinnitus scales.
+        self.assertNotIn("vas_pain", [item["id"] for item in registry["vas"]["items"]])
+
     def test_eq5d5l_remains_an_honest_stub(self):
         self.assertEqual(self._finalise().status_code, 200)
         report = self._report().json()

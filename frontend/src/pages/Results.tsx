@@ -223,14 +223,19 @@ export default function Results() {
     const body: Record<string, unknown> = { questionnaire_status: { [domainKey]: sectionStatus } };
     if (sectionStatus === "completed" && field && items) {
       // Same split as `Assessment.tsx::saveModule2Section` — the PHQ-9's
-      // functional-difficulty answer travels in the same `items` dict but is
-      // never one of the 9 scored symptom items.
-      const { phq9_functional_difficulty, ...scoredItems } = items as Record<string, number> & {
+      // functional-difficulty answer and the VAS's pain faces rating both
+      // travel in the same `items` dict but are never scored items of the
+      // instrument that asked them.
+      const { phq9_functional_difficulty, vas_pain, ...scoredItems } = items as Record<string, number> & {
         phq9_functional_difficulty?: number;
+        vas_pain?: number;
       };
       body[field] = scoredItems;
       if (domainKey === "phq9" && phq9_functional_difficulty !== undefined) {
         body.phq9_functional_difficulty = phq9_functional_difficulty;
+      }
+      if (domainKey === "vas" && vas_pain !== undefined) {
+        body.vas_pain = vas_pain;
       }
     }
     setCompletingSaving(true);
@@ -638,6 +643,29 @@ export default function Results() {
                         size="sm"
                       />
                     ))}
+                  </div>
+                )}
+
+                {/* The pain faces scale — a separate question asked after the
+                    four scales above, so it is reported beside them rather
+                    than inside that grid, with the band the printed scale's
+                    own correlation puts it in. */}
+                {data.questionnaires.vas_pain?.score != null && (
+                  <div style={{ marginTop: "var(--s4)" }}>
+                    <Readout
+                      label={t("results.clinical.painScale", { defaultValue: "Pain (VAS faces)" })}
+                      value={fmt.num(data.questionnaires.vas_pain.score, 0)}
+                      unit="/10"
+                      size="sm"
+                      tone={
+                        data.questionnaires.vas_pain.band === "severe"
+                          ? "crit"
+                          : data.questionnaires.vas_pain.band === "moderate"
+                            ? "warn"
+                            : "ok"
+                      }
+                      note={data.questionnaires.vas_pain.interpretation}
+                    />
                   </div>
                 )}
 

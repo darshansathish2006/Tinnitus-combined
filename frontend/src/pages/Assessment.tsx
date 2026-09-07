@@ -432,12 +432,19 @@ export default function Assessment() {
       // `PhqFunctionalDifficultyStep`) but is never part of `phq9_items` —
       // split it out to its own field so it can never be mistaken for a
       // 10th scored PHQ-9 item.
-      const { phq9_functional_difficulty, ...scoredItems } = items as Record<string, number> & {
+      // The VAS's pain faces scale travels the same way and for the same
+      // reason: asked on the same screen, stored in its own column, never one
+      // of the four tinnitus ratings the severity block is scored from.
+      const { phq9_functional_difficulty, vas_pain, ...scoredItems } = items as Record<string, number> & {
         phq9_functional_difficulty?: number;
+        vas_pain?: number;
       };
       body[field] = scoredItems;
       if (domainKey === "phq9" && phq9_functional_difficulty !== undefined) {
         body.phq9_functional_difficulty = phq9_functional_difficulty;
+      }
+      if (domainKey === "vas" && vas_pain !== undefined) {
+        body.vas_pain = vas_pain;
       }
     }
     try {
@@ -801,6 +808,7 @@ export default function Assessment() {
               ...(assessment?.vas_sleep_interference != null
                 ? { vas_sleep_interference: assessment.vas_sleep_interference }
                 : {}),
+              ...(assessment?.vas_pain != null ? { vas_pain: assessment.vas_pain } : {}),
             },
             thi_items: assessment?.thi_items ?? undefined,
             tfi_items: assessment?.tfi_items ?? undefined,
