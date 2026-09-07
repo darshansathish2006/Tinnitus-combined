@@ -42,7 +42,9 @@ import {
   type InstrumentSpec,
   type Item,
   type Option,
+  type PainScaleSpec,
 } from "./Questionnaires";
+import PainFaceScale from "./PainFaceScale";
 
 export type Module2Status = "not_started" | "completed" | "skipped";
 
@@ -156,6 +158,7 @@ export function InstrumentSectionForm({
   submitLabel,
   saving,
   oneAtATime,
+  startAtLastPage,
 }: {
   section: Module2Section;
   instruments: Record<string, InstrumentSpec> | null;
@@ -164,6 +167,11 @@ export function InstrumentSectionForm({
   onSubmit(answers: Record<string, number>): void;
   submitLabel: string;
   saving?: boolean;
+  /** Open the guided form on its *last* question rather than its first — how
+   *  a patient who stepped Back out of a trailing question (the VAS's pain
+   *  scale) returns to the question they were actually on. Ignored by the
+   *  all-items-on-one-page layout, which has no current question. */
+  startAtLastPage?: boolean;
   /** Guided, one-question-at-a-time presentation — used only by the Module 2
    *  wizard (`AboutYourTinnitus`). Defaults to the original all-items-on-one-
    *  page layout, which the Results page's "Complete a skipped instrument"
@@ -179,8 +187,19 @@ export function InstrumentSectionForm({
   if (!instruments) return <Loading label={t("questionnaires.loading")} />;
 
   const isVas = section.key === "vas";
-  const answeredCount = Object.keys(answers).length;
-  const allAnswered = items.length > 0 && answeredCount >= items.length;
+  // Only the instrument's own items count toward "answered". Two sections
+  // carry a trailing question that is deliberately *not* one of them — the
+  // VAS's pain faces scale and the PHQ-9's functional-difficulty item — and
+  // both are stored in the same answers dict, so counting raw keys would let
+  // an unanswered symptom item be paid for by the extra question.
+  const answeredCount = items.filter((i) => answers[i.id] !== undefined).length;
+  // The VAS's trailing pain faces scale, when the registry carries one. It is
+  // asked once, after the four scales, and is required to finish the section —
+  // an unanswered pain scale is a question the patient never saw an answer
+  // recorded for, and 0 ("no pain") must be chosen rather than defaulted into.
+  const painSpec = isVas ? spec?.pain_scale : undefined;
+  const painAnswered = !painSpec || answers[painSpec.id] !== undefined;
+  const allAnswered = items.length > 0 && answeredCount >= items.length && painAnswered;
 
   if (oneAtATime) {
     return (
@@ -195,6 +214,7 @@ export function InstrumentSectionForm({
         submitLabel={submitLabel}
         saving={saving}
         isVas={isVas}
+        startAtLastPage={startAtLastPage}
       />
     );
   }
@@ -306,6 +326,27 @@ export function InstrumentSectionForm({
           </div>
         )}
 
+        {/* The pain faces scale — the printed VAS's own separate question,
+            shown here as a trailing block on the same page (this form shows
+            every item at once already), never as a fifth tinnitus scale.
+            `answers.vas_pain` is split back out into its own field when the
+            section is saved (see `saveModule2Section` /
+            `saveCompletedInstrument`). */}
+        {painSpec && (
+          <div className="stack stack-3">
+            <hr className="rule" />
+            <p style={{ fontSize: "var(--fs-body)", lineHeight: 1.5, maxWidth: "40em" }}>
+              {t(`instruments.items.${painSpec.id}`, { defaultValue: painSpec.text })}
+            </p>
+            <PainFaceScale
+              spec={painSpec}
+              value={answers[painSpec.id]}
+              onChange={(v) => setAnswers((prev) => ({ ...prev, [painSpec.id]: v }))}
+              disabled={saving}
+            />
+          </div>
+        )}
+
         {/* The PHQ-9's separate, non-scored functional-difficulty question —
             shown once here as a trailing block on the same page (this form
             shows every item at once already), never as the form's 10th item
@@ -373,6 +414,7 @@ function GuidedInstrumentSectionForm({
   submitLabel,
   saving,
   isVas,
+  startAtLastPage,
 }: {
   section: Module2Section;
   spec: InstrumentSpec | null | undefined;
@@ -384,6 +426,7 @@ function GuidedInstrumentSectionForm({
   submitLabel: string;
   saving?: boolean;
   isVas: boolean;
+  startAtLastPage?: boolean;
 }) {
   const { t } = useTranslation();
   // Pages, not raw items: the ISI's `isi1a`/`isi1b`/`isi1c` share `group:
@@ -394,7 +437,7 @@ function GuidedInstrumentSectionForm({
   // How far the patient has *reached*, distinct from how many pages are
   // answered — going back and changing an earlier answer must not shrink the
   // set of questions Back can reach.
-  const [index, setIndex] = useState(0);
+  const [index, setIndex] = useState(() => (startAtLastPage ? Math.max(0, pages.length - 1) : 0));
   const page = pages[index] ?? [];
   const item = page.length === 1 ? page[0] : undefined;
   const isLast = index === pages.length - 1;
@@ -730,6 +773,70 @@ function NumberedScale({
 }
 
 /**
+ * The pain faces scale, asked once the four tinnitus VAS scales are answered.
+ *
+ * A step of its own, exactly as the printed scale directs — the patient has
+ * just rated their tinnitus four times, and this asks about something else
+ * entirely, so putting it on the same page as the fourth scale would read as a
+ * fifth one. Nothing about the four scales' answers changes here: they are
+ * held by the wizard while this is asked, and submitted together.
+ *
+ * Unlike a button, a scale has no natural "I'm done" event, so this advances
+ * on an explicit Continue — and Continue stays disabled until a rating has
+ * actually been chosen, since 0 is a real answer and must never be recorded
+ * by default.
+ */
+function VasPainStep({
+  spec,
+  value,
+  onChange,
+  onBack,
+  onSubmit,
+  submitLabel,
+  saving,
+}: {
+  spec: PainScaleSpec;
+  value: number | undefined;
+  onChange(value: number): void;
+  onBack(): void;
+  onSubmit(): void;
+  submitLabel: string;
+  saving?: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Panel
+      title={t("assessment.module2.painTitle", { defaultValue: "One more question" })}
+      bracketed
+    >
+      <div className="stack stack-4 fade-in">
+        <p style={{ fontSize: "var(--fs-lead)", lineHeight: 1.5, maxWidth: "40em" }}>
+          {t(`instruments.items.${spec.id}`, { defaultValue: spec.text })}
+        </p>
+
+        <PainFaceScale spec={spec} value={value} onChange={onChange} disabled={saving} />
+
+        <hr className="rule" />
+
+        <div className="row row--between">
+          <button type="button" className="btn btn--ghost" onClick={onBack} disabled={saving}>
+            ← {t("common.back")}
+          </button>
+          <button
+            type="button"
+            className="btn btn--primary"
+            onClick={onSubmit}
+            disabled={saving || value === undefined}
+          >
+            {saving ? t("common.saving") : submitLabel}
+          </button>
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+/**
  * The PHQ-9's separate, non-scored functional-difficulty question — shown
  * once the 9 symptom items are all answered, exactly as the published form
  * presents it after the total-score line, never as the form's "10th
@@ -826,6 +933,18 @@ export default function AboutYourTinnitus({
   // scored item, and never counted in the "Question X of 9" progress the
   // guided form already finished showing.
   const [pendingPhq9Answers, setPendingPhq9Answers] = useState<Record<string, number> | null>(null);
+  // The four completed tinnitus VAS ratings, held here while the pain faces
+  // scale is asked as its own step — the printed scale asks it after the
+  // questionnaire above it is finished, and this is that "after". Nothing is
+  // saved until both halves are answered, so the section is never recorded as
+  // completed with only part of what it asks for.
+  //
+  // The draft outlives the step deliberately: Back returns to the four scales
+  // with what was just entered still on them, rather than remounting the form
+  // on whatever was last saved.
+  const [vasDraft, setVasDraft] = useState<Record<string, number> | null>(null);
+  const [painStepOpen, setPainStepOpen] = useState(false);
+  const painSpec = instruments?.vas?.pain_scale;
 
   const section = MODULE2_SECTIONS[index];
   const isLast = index === MODULE2_SECTIONS.length - 1;
@@ -838,6 +957,7 @@ export default function AboutYourTinnitus({
     const next = index + 1;
     setIndex(next);
     setMaxVisited((m) => Math.max(m, next));
+    setPainStepOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -852,6 +972,9 @@ export default function AboutYourTinnitus({
     try {
       await onSectionSave(section.key, undefined, "skipped");
       setStatus((prev) => ({ ...prev, [section.key]: "skipped" }));
+      setPendingPhq9Answers(null);
+      setVasDraft(null);
+      setPainStepOpen(false);
       advance();
     } catch {
       // already reported to the patient by the caller
@@ -867,11 +990,20 @@ export default function AboutYourTinnitus({
       setPendingPhq9Answers(answers);
       return;
     }
+    // The VAS has the pain faces scale after its four ratings, for the same
+    // reason and on the same terms — see `VasPainStep`.
+    if (section.key === "vas" && painSpec && !painStepOpen) {
+      setVasDraft(answers);
+      setPainStepOpen(true);
+      return;
+    }
     setSaving(true);
     try {
       await onSectionSave(section.key, answers, "completed");
       setStatus((prev) => ({ ...prev, [section.key]: "completed" }));
       setPendingPhq9Answers(null);
+      setVasDraft(null);
+      setPainStepOpen(false);
       advance();
     } catch {
       // already reported to the patient by the caller
@@ -881,7 +1013,9 @@ export default function AboutYourTinnitus({
   }
 
   const initialAnswersFor: Record<string, Record<string, number> | undefined> = {
-    vas: initial.vas as Record<string, number> | undefined,
+    // The in-flight draft wins over what was last saved, so returning from the
+    // pain step does not discard ratings that have not been saved yet.
+    vas: vasDraft ?? (initial.vas as Record<string, number> | undefined),
     thi: initial.thi_items,
     tfi: initial.tfi_items,
     isi: initial.isi_items,
@@ -900,7 +1034,13 @@ export default function AboutYourTinnitus({
             className="steprail__step"
             data-state={i === index ? "active" : status[s.key] === "completed" ? "done" : "todo"}
             disabled={i > maxVisited}
-            onClick={() => i <= maxVisited && setIndex(i)}
+            onClick={() => {
+              if (i > maxVisited) return;
+              // Jumping sections always lands on the section's questions, not
+              // on a trailing step left open from last time through it.
+              setPainStepOpen(false);
+              setIndex(i);
+            }}
           >
             <span className="steprail__n">
               {status[s.key] === "completed" ? (
@@ -931,6 +1071,16 @@ export default function AboutYourTinnitus({
 
       {section.kind === "stub" ? (
         <StubSection section={section} onNext={advance} />
+      ) : section.key === "vas" && painSpec && painStepOpen ? (
+        <VasPainStep
+          spec={painSpec}
+          value={vasDraft?.[painSpec.id]}
+          onChange={(v) => setVasDraft((prev) => ({ ...(prev ?? {}), [painSpec.id]: v }))}
+          onBack={() => setPainStepOpen(false)}
+          onSubmit={() => handleSubmit(vasDraft ?? {})}
+          submitLabel={`${t("common.next")} →`}
+          saving={saving}
+        />
       ) : section.key === "phq9" && pendingPhq9Answers !== null ? (
         <PhqFunctionalDifficultyStep
           spec={instruments?.phq9 ?? null}
@@ -945,6 +1095,11 @@ export default function AboutYourTinnitus({
           section={section}
           instruments={instruments}
           initialAnswers={initialAnswersFor[section.key]}
+          // Back out of the pain scale returns to the fourth VAS rating, not
+          // to the first: the patient's place in the section is where they
+          // left it, and re-walking three answered questions to get back to
+          // the trailing one is not a Back button.
+          startAtLastPage={section.key === "vas" && vasDraft !== null}
           onSkip={handleSkip}
           onSubmit={handleSubmit}
           submitLabel={isLast ? t("assessment.module2.finish", { defaultValue: "Finish" }) : `${t("common.next")} →`}

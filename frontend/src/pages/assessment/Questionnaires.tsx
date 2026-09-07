@@ -118,6 +118,35 @@ export interface Item {
   group?: string;
 }
 
+/** One step of the printed pain scale's verbal scale, with its ADL correlation. */
+export interface PainScaleBand {
+  key: string;
+  min: number;
+  max: number;
+  label: string;
+  impact: string;
+}
+
+/**
+ * The 0-10 pain faces scale carried on the VAS registry entry — the printed
+ * Visual Analogue pain scale, asked as its own question after the four
+ * tinnitus VAS scales and never one of them. Rendered by `PainFaceScale`.
+ */
+export interface PainScaleSpec {
+  id: string;
+  text: string;
+  help?: string;
+  low: string;
+  mid?: string;
+  high: string;
+  min: number;
+  max: number;
+  step: number;
+  /** The positions the printed scale draws a face at (0, 2, 4, 6, 8, 10). */
+  face_values: number[];
+  bands: PainScaleBand[];
+}
+
 export interface InstrumentSpec {
   name: string;
   abbrev: string;
@@ -135,6 +164,9 @@ export interface InstrumentSpec {
   /** The PHQ-9's separate, non-scored functional-difficulty item — never one
    *  of `items`, never part of the 0-27 total. */
   functional_difficulty?: { text: string; options: Option[] };
+  /** The VAS entry's separate 0-10 pain faces scale — never one of `items`,
+   *  never part of the four tinnitus scales' scoring. */
+  pain_scale?: PainScaleSpec;
 }
 
 export interface QuestionnaireResult {

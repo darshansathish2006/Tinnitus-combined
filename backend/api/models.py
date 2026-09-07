@@ -391,6 +391,11 @@ class Assessment(models.Model):
     vas_annoyance = models.FloatField(null=True, blank=True)
     vas_awareness = models.FloatField(null=True, blank=True)
     vas_sleep_interference = models.FloatField(null=True, blank=True)
+    #: The 0-10 pain/discomfort faces scale, asked once after the four scales
+    #: above. Kept out of `score_vas` on purpose - see `clinical.instruments.
+    #: PAIN_VAS`: it rates pain, not the percept, so it is stored and scored
+    #: on its own rather than as a fifth tinnitus VAS.
+    vas_pain = models.FloatField(null=True, blank=True)
 
     psqi_items = models.JSONField(default=dict, blank=True)
     psqi_score = models.IntegerField(null=True, blank=True)

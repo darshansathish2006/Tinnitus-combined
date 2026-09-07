@@ -2551,6 +2551,265 @@ code, kbd, .mono {
   .gratitude-note--sticking .gratitude-note__pin { animation: none; }
 }
 
+/* The 0-10 pain faces scale.
+
+   The printed Visual Analogue pain scale, rebuilt as a control: the ruler, the
+   row of six drawn faces beneath it, the verbal scale, and one large face that
+   answers back. Asked once, after the four tinnitus VAS scales — see
+   `PainFaceScale.tsx`, which draws every face from the same geometry so the
+   large one can sit at any point between the six the row shows.
+
+   Colour is carried on three variables set per band, and only those change, so
+   crossing from moderate to severe cross-fades every part of the face at once
+   rather than each part cutting on its own. */
+.painscale { display: flex; flex-direction: column; gap: var(--s4); }
+
+.painscale__stage {
+  display: flex;
+  align-items: center;
+  gap: var(--s5);
+  padding: var(--s4) var(--s5);
+  background: var(--band-wash);
+  border: var(--hairline) solid var(--band-line);
+  border-radius: var(--radius-lg);
+  transition: background 240ms ease, border-color 240ms ease;
+}
+.painscale__stage--none { --band-line: var(--ok); --band-wash: var(--ok-wash); --band-ink: var(--ok-ink); }
+.painscale__stage--mild { --band-line: var(--ok); --band-wash: var(--ok-wash); --band-ink: var(--ok-ink); }
+.painscale__stage--moderate { --band-line: var(--warn); --band-wash: var(--warn-wash); --band-ink: var(--warn-ink); }
+.painscale__stage--severe { --band-line: var(--crit); --band-wash: var(--crit-wash); --band-ink: var(--crit-ink); }
+
+/* Unanswered is legible, not hidden: the face is still drawn, just quieter,
+   so the control reads as "choose one of these" rather than as broken. */
+.painscale--unset .painscale__stage { --band-line: var(--line-faint); --band-wash: var(--paper-sunken); --band-ink: var(--ink-3); }
+/* Only the big reacting face is quietened while the question is unanswered —
+   the six faces of the printed row are the choices, and dimming those would
+   read as "unavailable" rather than "not chosen yet". */
+.painscale--unset .painscale__facewrap .painface { opacity: 0.45; }
+
+/* The pop. React keys this wrapper on the band name, so it replays when the
+   band changes and stays out of the way while the patient moves within one. */
+.painscale__facewrap {
+  flex: none;
+  line-height: 0;
+  animation: painscale-pop 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.painscale__stage--none .painface,
+.painscale__stage--mild .painface { animation: painscale-bob 2.6s ease-in-out infinite; }
+.painscale__stage--moderate .painface { animation: painscale-sway 3.4s ease-in-out infinite; }
+.painscale__stage--severe .painface { animation: painscale-tremble 0.9s ease-in-out infinite; }
+
+.painface { display: block; overflow: visible; }
+.painface__head {
+  fill: var(--paper-raised);
+  stroke: var(--band-line, var(--ink));
+  stroke-width: 3;
+  transition: stroke 240ms ease;
+}
+.painface__ink {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.painface__pupil { fill: var(--ink); stroke: none; }
+.painface__tears { transition: opacity 240ms ease; }
+.painface__tear {
+  fill: var(--data);
+  stroke: none;
+  transform-box: fill-box;
+  transform-origin: center top;
+  animation: painscale-tear 2.2s ease-in infinite;
+}
+.painface__tear--right { animation-delay: 0.9s; }
+
+.painscale__reading { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.painscale__number {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.painscale__number strong { font-size: 40px; line-height: 1; color: var(--band-ink); }
+.painscale__number span { font-size: var(--fs-small); color: var(--ink-3); }
+.painscale__number--empty strong { color: var(--ink-4); }
+.painscale__band {
+  font-size: var(--fs-small);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--band-ink);
+}
+.painscale__impact { font-size: var(--fs-micro); line-height: 1.4; color: var(--ink-3); margin: 0; }
+
+/* The ruler. Eleven equal cells, each its own hit target, drawn as tick marks
+   hanging off one rule — the printed scale, not a slider dressed as one. */
+.painscale__anchors {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s2);
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.painscale__anchors span:nth-child(2) { text-align: center; }
+.painscale__anchors span:last-child { text-align: right; }
+
+.painscale__rule {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border-top: 2px solid var(--ink);
+}
+.painscale__tick {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s1);
+  padding: 0 0 var(--s1);
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--ink);
+  transition: background 120ms ease, color 120ms ease;
+}
+.painscale__tick:disabled { opacity: 0.5; cursor: not-allowed; }
+.painscale__tickmark {
+  width: 2px;
+  height: 14px;
+  background: var(--ink);
+  transition: height 160ms ease, background 160ms ease;
+}
+.painscale__ticknum {
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: var(--fs-body);
+  line-height: 1;
+}
+/* `:not([aria-checked="true"])` is not decoration: `:hover:not(:disabled)` is
+   one pseudo-class more specific than `[aria-checked="true"]`, so without it
+   hovering the chosen tick paints the hover wash over the selection. */
+.painscale__tick:not([aria-checked="true"]):hover:not(:disabled) { background: var(--paper-sunken); }
+.painscale__tick:not([aria-checked="true"]):hover:not(:disabled) .painscale__tickmark { height: 20px; }
+.painscale__tick[aria-checked="true"] { background: var(--signal); color: var(--on-signal); }
+.painscale__tick[aria-checked="true"] .painscale__tickmark { height: 22px; background: var(--on-signal); }
+
+/* The face row. Six positions, exactly the ones the printed scale draws. */
+.painscale__faces { display: flex; gap: var(--s2); flex-wrap: wrap; }
+.painscale__facebtn {
+  flex: 1 1 0;
+  min-width: 76px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s1);
+  padding: var(--s2) var(--s1);
+  background: var(--paper-raised);
+  border: var(--hairline) solid var(--ink);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+}
+.painscale__facebtn--none, .painscale__facebtn--mild { --band-line: var(--ok); }
+.painscale__facebtn--moderate { --band-line: var(--warn); }
+.painscale__facebtn--severe { --band-line: var(--crit); }
+.painscale__facebtn:hover:not(:disabled) { transform: translate(-1px, -1px); box-shadow: 2px 2px 0 var(--ink); }
+.painscale__facebtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.painscale__facebtn[aria-pressed="true"] {
+  background: var(--band-wash, var(--signal-wash));
+  box-shadow: 2px 2px 0 var(--ink);
+  transform: translate(-1px, -1px);
+}
+.painscale__facebtn--none[aria-pressed="true"], .painscale__facebtn--mild[aria-pressed="true"] { --band-wash: var(--ok-wash); }
+.painscale__facebtn--moderate[aria-pressed="true"] { --band-wash: var(--warn-wash); }
+.painscale__facebtn--severe[aria-pressed="true"] { --band-wash: var(--crit-wash); }
+/* Only the chosen face keeps moving — six idling faces would be noise. */
+.painscale__facebtn[aria-pressed="true"] .painface { animation: painscale-bob 2.6s ease-in-out infinite; }
+.painscale__facebtn--severe[aria-pressed="true"] .painface { animation: painscale-tremble 0.9s ease-in-out infinite; }
+.painscale__facenum {
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: var(--fs-small);
+  line-height: 1;
+}
+
+/* The verbal scale, with the step the current rating falls in lit. */
+.painscale__verbal {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s2);
+  padding-top: var(--s2);
+  border-top: var(--hairline) solid var(--line-faint);
+}
+.painscale__verbalstep {
+  flex: 1 1 0;
+  text-align: center;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  transition: color 200ms ease;
+}
+.painscale__verbalstep[data-active="true"] { color: var(--ink); font-weight: 800; }
+
+@keyframes painscale-pop {
+  0% { transform: scale(0.82) translateY(5px); }
+  100% { transform: scale(1) translateY(0); }
+}
+@keyframes painscale-bob {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-4px) rotate(1.5deg); }
+}
+@keyframes painscale-sway {
+  0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+  50% { transform: translateY(1px) rotate(1.5deg); }
+}
+/* Not a shake — a small, fast, uneven judder, which is what bracing looks
+   like and what a shake does not. */
+@keyframes painscale-tremble {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  20% { transform: translate(-1.5px, 1px) rotate(-1deg); }
+  45% { transform: translate(1.5px, -1px) rotate(1deg); }
+  70% { transform: translate(-1px, 0) rotate(-0.5deg); }
+}
+@keyframes painscale-tear {
+  0% { transform: translateY(-4px) scaleY(0.6); opacity: 0; }
+  25% { opacity: 1; }
+  100% { transform: translateY(18px) scaleY(1.15); opacity: 0; }
+}
+
+@media (max-width: 640px) {
+  .painscale__stage { flex-direction: column; align-items: flex-start; gap: var(--s3); }
+  .painscale__ticknum { font-size: var(--fs-small); }
+  /* Wide enough that the six faces wrap 3 + 3 rather than 4 + 2, which reads
+     as two rows of choices instead of one row and a remainder. */
+  .painscale__facebtn { min-width: 92px; }
+}
+
+/* Reduced motion keeps the face, its colours and every number — those are the
+   answer — and drops only the movement. The morph itself is already snapped
+   rather than eased in `useEasedValue`, so nothing is left animating. */
+@media (prefers-reduced-motion: reduce) {
+  .painscale__facewrap,
+  .painscale .painface,
+  .painface__tear {
+    animation: none;
+  }
+  .painscale__stage,
+  .painface__head,
+  .painscale__verbalstep,
+  .painscale__tickmark {
+    transition: none;
+  }
+}
+
 /* Print.
 
    Paper is white whatever the screen theme is, so the dark palette has to be

@@ -738,6 +738,10 @@ def apply_submission(assessment: Assessment, data: dict[str, Any]) -> None:
         "ri_stimulation_started_at", "ri_stimulation_stopped_at",
         "ri_reduction_detected_at", "ri_return_to_baseline_at", "ri_repeated",
         "phq9_functional_difficulty",
+        # The pain faces scale - its own field, exactly like the PHQ-9's
+        # functional-difficulty item, so it can never be mistaken for a fifth
+        # tinnitus VAS (see `clinical.instruments.PAIN_VAS`).
+        "vas_pain",
     ):
         if field in data:
             setattr(assessment, field, data[field])
@@ -834,6 +838,7 @@ def rescore(assessment: Assessment) -> None:
             "vas_awareness": assessment.vas_awareness,
             "vas_sleep_interference": assessment.vas_sleep_interference,
         },
+        "vas_pain": assessment.vas_pain,
     }
     scores = score_all(raw)
 
@@ -970,7 +975,7 @@ def assessment_detail(request, assessment_id: int):
 POST_COMPLETE_EDITABLE_FIELDS = frozenset(
     {
         "thi_items", "tfi_items", "isi_items", "phq9_items", "phq9_functional_difficulty",
-        "vas", "gad7_items", "pss10_items", "questionnaire_status",
+        "vas", "vas_pain", "gad7_items", "pss10_items", "questionnaire_status",
     }
 )
 

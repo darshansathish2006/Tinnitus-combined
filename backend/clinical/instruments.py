@@ -953,6 +953,78 @@ def score_vas(raw: Mapping[str, Any] | None) -> dict[str, float | None]:
 
 
 # --------------------------------------------------------------------------- #
+# Pain / discomfort VAS - the faces scale
+# --------------------------------------------------------------------------- #
+# A separate question asked *after* the four tinnitus VAS scales, never one of
+# them: the published 0-10 Visual Analogue pain scale, with its face row, its
+# verbal scale and its own ADL-impact bands. It is deliberately kept out of
+# `score_vas` and out of `VAS_SCALES` - it measures pain, not the percept, so
+# folding it into the tinnitus severity block would change what those four
+# numbers mean. Structurally this is the same arrangement as the PHQ-9's
+# functional-difficulty item: asked on the same screen, stored in its own
+# field, scored on its own terms.
+#
+# The bands are the correlation printed on the scale itself:
+#   1-3 mild pain, minimal impact on ADLs
+#   4-6 moderate pain, moderate impact on ADLs
+#   7-10 severe pain, major impact on ADLs
+# 0 is a real answer ("no pain"), not an absent one, and gets its own band
+# rather than being folded into "mild".
+PAIN_VAS_BANDS: list[dict[str, Any]] = [
+    {"key": "none", "min": 0, "max": 0, "label": "No pain",
+     "impact": "No pain reported."},
+    {"key": "mild", "min": 1, "max": 3, "label": "Mild",
+     "impact": "Mild pain; minimal impact on activities of daily living."},
+    {"key": "moderate", "min": 4, "max": 6, "label": "Moderate",
+     "impact": "Moderate pain; moderate impact on activities of daily living."},
+    {"key": "severe", "min": 7, "max": 10, "label": "Severe pain",
+     "impact": "Severe pain; major impact on activities of daily living."},
+]
+
+PAIN_VAS: dict[str, Any] = {
+    "id": "vas_pain",
+    "text": "How much pain or physical discomfort are you in right now?",
+    "help": "Choose the face and the number that match how you feel.",
+    "low": "No Pain",
+    "mid": "Moderate Pain",
+    "high": "Worst Pain",
+    "min": 0,
+    "max": 10,
+    "step": 1,
+    #: The positions the printed scale draws a face at.
+    "face_values": [0, 2, 4, 6, 8, 10],
+    "bands": PAIN_VAS_BANDS,
+}
+
+
+def pain_vas_band(value: float) -> dict[str, Any]:
+    """The printed scale's band for a 0-10 pain rating."""
+    for band in PAIN_VAS_BANDS:
+        if band["min"] <= value <= band["max"]:
+            return band
+    return PAIN_VAS_BANDS[-1]
+
+
+def score_pain_vas(raw: Any) -> dict[str, Any]:
+    """Read back the pain VAS: the rating, its verbal band and its ADL impact.
+
+    Unanswered stays null all the way through - a patient who was never asked
+    and a patient who answered 0 must never look the same.
+    """
+    try:
+        value = round(min(10.0, max(0.0, float(raw))), 1)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return {"score": None, "band": None, "grade": None, "interpretation": ""}
+    band = pain_vas_band(value)
+    return {
+        "score": value,
+        "band": band["key"],
+        "grade": band["label"],
+        "interpretation": band["impact"],
+    }
+
+
+# --------------------------------------------------------------------------- #
 # TFI - Tinnitus Functional Index
 # --------------------------------------------------------------------------- #
 # Meikle MB, Henry JA, Griest SE, et al. The Tinnitus Functional Index:
@@ -1581,6 +1653,11 @@ INSTRUMENT_REGISTRY: dict[str, dict[str, Any]] = {
         "citation": "Tinnitus Research Initiative minimum reporting standard.",
         "items": VAS_SCALES,
         "max_score": 10,
+        # Asked once, after the four scales above - see `PAIN_VAS`. Carried on
+        # the registry rather than hard-coded in the client for the same reason
+        # every other item bank is: the question the patient sees and the code
+        # that scores it come from one place.
+        "pain_scale": PAIN_VAS,
     },
     "tfi": {
         "name": "Tinnitus Functional Index",
@@ -1643,6 +1720,9 @@ def score_all(payload: Mapping[str, Any]) -> dict[str, Any]:
     scores: dict[str, Any] = {
         "thi": score_thi(payload.get("thi_items")).to_dict(),
         "vas": score_vas(payload.get("vas")),
+        # The pain faces scale, kept out of "vas" so the four tinnitus scales
+        # keep meaning exactly what they meant before it existed.
+        "vas_pain": score_pain_vas(payload.get("vas_pain")),
         "gad2": score_gad2(gad_items).to_dict(),
         "phq2": score_phq2(payload.get("phq2_items")).to_dict(),
         "pss4": score_pss4(pss_items).to_dict(),

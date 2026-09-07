@@ -378,6 +378,10 @@ class AssessmentSubmitSerializer(serializers.Serializer):
     tfi_items = serializers.DictField(required=False)
     isi_items = serializers.DictField(required=False)
     vas = serializers.DictField(required=False)
+    # The pain/discomfort faces scale, asked after the four tinnitus VAS
+    # scales and stored in its own field - never inside `vas`, whose four keys
+    # are the tinnitus severity block the algorithm scores.
+    vas_pain = serializers.FloatField(required=False, allow_null=True, min_value=0, max_value=10)
     psqi_items = serializers.DictField(required=False)
     pss10_items = serializers.DictField(required=False)
     pss4_items = serializers.DictField(required=False)
