@@ -4,8 +4,30 @@
  * Replaces the old two-instrument questionnaire step (VAS + THI-5) and the old
  * separate "Sleep, mood and stress" step. Neither of those exists as a
  * standalone module any more: this is the one place all eight tinnitus-related
- * result categories are administered, in a fixed clinical order, each with its
- * own explicit Skip.
+ * result categories are administered.
+ *
+ * The eight are grouped into two clearly separated parts, per
+ * `MODULE2_SECTIONS`'s `required` flag (the frontend twin of
+ * `backend/api/views.py::MODULE2_DOMAINS`):
+ *
+ *   - **Core Tinnitus Assessment** (VAS, THI, TFI) — mandatory. No Skip is
+ *     offered (see `allowSkip` below); the module cannot be considered
+ *     core-complete, and `onAllDone` cannot be reached, until all three carry
+ *     `questionnaire_status === "completed"`. A "skipped" status is never
+ *     treated as complete — see `coreComplete` in the wizard component.
+ *   - **Optional Wellbeing Assessment** (ISI, GAD-7, PHQ-9, PSS-10,
+ *     WHOQOL-BREF) — each freely completable now or skippable for later, and
+ *     none of the five block reaching the Hearing step.
+ *
+ * Rather than the old fixed linear sequence (question 1 of 8, always
+ * advancing), the default view is a two-section menu of cards — one per
+ * instrument, showing its own status and action — so a patient can do them in
+ * any order, leave and return to any one individually, and see at a glance
+ * which of the three required ones remain. Choosing a card opens the exact
+ * same single-instrument form (`InstrumentSectionForm`, `oneAtATime`) the old
+ * linear flow already used for that instrument; nothing about how a
+ * questionnaire is administered, scored, or persisted changed — only how a
+ * patient chooses which one to start.
  *
  * Seven of the eight have real, validated item content already in this
  * codebase and are administered in full, directly (not as short-form
@@ -16,17 +38,22 @@
  * item with three independently-scored rows — see `groupItemsIntoPages`),
  * GAD-7, PHQ-9 (nine items, plus one separate, non-scored functional-
  * difficulty question — see `PhqFunctionalDifficultyStep`), PSS-10. The
- * remaining one — EQ-5D-5L — has no validated item content anywhere in this
- * codebase. Rather than invent, approximate, or silently fabricate one, that
- * section shows an honest "not yet available" notice and carries no Skip
- * (skipping implies declining something real) and no score.
+ * remaining one — WHOQOL-BREF (formerly labelled "EQ-5D-5L", which itself was
+ * never more than this same empty placeholder — see `MODULE2_SECTIONS`) — has
+ * no validated item content anywhere in this codebase. Rather than invent,
+ * approximate, or silently fabricate one, that section shows an honest "not
+ * yet available" notice and carries no Skip (skipping implies declining
+ * something real) and no score.
  *
  * Every real section is a single page showing every item and every response
- * option at once — never a bare heading — with Skip and Next/Continue. A
- * skipped section is saved through `onSectionSave` as
+ * option at once — never a bare heading — with (for optional sections) Skip
+ * and Next/Continue. A skipped section is saved through `onSectionSave` as
  * `questionnaire_status[key] = "skipped"` and posts no item answers, so
  * `rescore()` on the server leaves that instrument's score `null` rather than
- * fabricating a zero.
+ * fabricating a zero. Leaving a section partway through — the guided form's
+ * `onProgress` — saves what is answered so far as `questionnaire_status[key]
+ * = "in_progress"`, so returning to it resumes at the first unanswered
+ * question with every prior answer restored, rather than losing them.
  */
 
 import { useMemo, useRef, useState } from "react";
@@ -46,7 +73,7 @@ import {
 } from "./Questionnaires";
 import PainFaceScale from "./PainFaceScale";
 
-export type Module2Status = "not_started" | "completed" | "skipped";
+export type Module2Status = "not_started" | "in_progress" | "completed" | "skipped";
 
 export interface Module2Section {
   key: string;
@@ -56,24 +83,40 @@ export interface Module2Section {
   kind: "real" | "stub";
   /** Key into the `/api/assessments/instruments` registry, for real sections. */
   registryKey?: string;
+  /** Core Tinnitus Assessment (VAS/THI/TFI, mandatory) vs. Optional Wellbeing
+   *  Assessment (everything else) — the twin of `required` on
+   *  `backend/api/views.py::MODULE2_DOMAINS`. Core sections never offer Skip
+   *  and gate the module's overall completion; optional ones always do. */
+  required: boolean;
 }
 
 /**
  * The eight result categories, in the fixed clinical order the product
- * specification requires. This is the frontend twin of
- * `backend/api/views.py::MODULE2_DOMAINS` — the two lists must name the same
- * eight keys in the same order, since the Results page matches them up by key.
+ * specification requires — first the three Core Tinnitus Assessment
+ * instruments, then the five Optional Wellbeing Assessment ones. This is the
+ * frontend twin of `backend/api/views.py::MODULE2_DOMAINS` — the two lists
+ * must name the same eight keys in the same order, since the Results page
+ * matches them up by key.
  */
 export const MODULE2_SECTIONS: Module2Section[] = [
-  { key: "vas", category: "Tinnitus Severity", instrumentAbbrev: "VAS / NRS", instrumentFullName: "Visual Analogue / Numeric Rating Scales", kind: "real", registryKey: "vas" },
-  { key: "thi", category: "Tinnitus Handicap", instrumentAbbrev: "THI", instrumentFullName: "Tinnitus Handicap Inventory", kind: "real", registryKey: "thi" },
-  { key: "tfi", category: "Tinnitus Functional Impact", instrumentAbbrev: "TFI", instrumentFullName: "Tinnitus Functional Index", kind: "real", registryKey: "tfi" },
-  { key: "isi", category: "Sleep & Insomnia", instrumentAbbrev: "ISI", instrumentFullName: "Insomnia Severity Index", kind: "real", registryKey: "isi" },
-  { key: "gad7", category: "Anxiety", instrumentAbbrev: "GAD-7", instrumentFullName: "Generalised Anxiety Disorder 7-item scale", kind: "real", registryKey: "gad7" },
-  { key: "phq9", category: "Mood / Depression", instrumentAbbrev: "PHQ-9", instrumentFullName: "Patient Health Questionnaire-9", kind: "real", registryKey: "phq9" },
-  { key: "pss10", category: "Perceived Stress", instrumentAbbrev: "PSS", instrumentFullName: "Perceived Stress Scale", kind: "real", registryKey: "pss10" },
-  { key: "eq5d5l", category: "Health-Related Quality of Life", instrumentAbbrev: "EQ-5D-5L", instrumentFullName: "EuroQol 5-Dimension 5-Level scale", kind: "stub" },
+  { key: "vas", category: "Tinnitus Severity", instrumentAbbrev: "VAS / NRS", instrumentFullName: "Visual Analogue / Numeric Rating Scales", kind: "real", registryKey: "vas", required: true },
+  { key: "thi", category: "Tinnitus Handicap", instrumentAbbrev: "THI", instrumentFullName: "Tinnitus Handicap Inventory", kind: "real", registryKey: "thi", required: true },
+  { key: "tfi", category: "Tinnitus Functional Impact", instrumentAbbrev: "TFI", instrumentFullName: "Tinnitus Functional Index", kind: "real", registryKey: "tfi", required: true },
+  { key: "isi", category: "Sleep & Insomnia", instrumentAbbrev: "ISI", instrumentFullName: "Insomnia Severity Index", kind: "real", registryKey: "isi", required: false },
+  { key: "gad7", category: "Anxiety", instrumentAbbrev: "GAD-7", instrumentFullName: "Generalised Anxiety Disorder 7-item scale", kind: "real", registryKey: "gad7", required: false },
+  { key: "phq9", category: "Mood / Depression", instrumentAbbrev: "PHQ-9", instrumentFullName: "Patient Health Questionnaire-9", kind: "real", registryKey: "phq9", required: false },
+  { key: "pss10", category: "Perceived Stress", instrumentAbbrev: "PSS-10", instrumentFullName: "Perceived Stress Scale", kind: "real", registryKey: "pss10", required: false },
+  // WHOQOL-BREF has no validated item content anywhere in this codebase (a
+  // repo-wide search found zero "whoqol" hits). This was "eq5d5l" (EQ-5D-5L),
+  // itself never more than the same honest stub — no EQ-5D-5L item bank,
+  // scoring, or model field exists either — so this renames an empty
+  // placeholder's label; it does not relabel real EQ-5D-5L content or data.
+  // `kind: "stub"` stays: nothing here is fabricated.
+  { key: "whoqol_bref", category: "Quality of Life", instrumentAbbrev: "WHOQOL-BREF", instrumentFullName: "World Health Organization Quality of Life — BREF", kind: "stub", required: false },
 ];
+
+export const MODULE2_CORE_SECTIONS = MODULE2_SECTIONS.filter((s) => s.required);
+export const MODULE2_OPTIONAL_SECTIONS = MODULE2_SECTIONS.filter((s) => !s.required);
 
 export interface Module2InitialData {
   vas?: Record<string, number>;
@@ -155,22 +198,32 @@ export function InstrumentSectionForm({
   initialAnswers,
   onSkip,
   onSubmit,
+  onProgress,
   submitLabel,
   saving,
   oneAtATime,
   startAtLastPage,
+  allowSkip = true,
 }: {
   section: Module2Section;
   instruments: Record<string, InstrumentSpec> | null;
   initialAnswers?: Record<string, number>;
   onSkip(): void;
   onSubmit(answers: Record<string, number>): void;
+  /** Fires with whatever is answered so far whenever the guided form advances
+   *  to a new page without submitting — how a partially-answered optional
+   *  section is saved as `questionnaire_status[key] = "in_progress"` so
+   *  leaving and returning resumes with those answers restored, rather than
+   *  losing them. Ignored by the all-items-on-one-page layout (nothing is
+   *  "in progress" there — it either has every answer or none). */
+  onProgress?(answers: Record<string, number>): void;
   submitLabel: string;
   saving?: boolean;
   /** Open the guided form on its *last* question rather than its first — how
    *  a patient who stepped Back out of a trailing question (the VAS's pain
    *  scale) returns to the question they were actually on. Ignored by the
-   *  all-items-on-one-page layout, which has no current question. */
+   *  all-items-on-one-page layout, which has no current question. Takes
+   *  priority over resuming at the first unanswered question. */
   startAtLastPage?: boolean;
   /** Guided, one-question-at-a-time presentation — used only by the Module 2
    *  wizard (`AboutYourTinnitus`). Defaults to the original all-items-on-one-
@@ -178,6 +231,13 @@ export function InstrumentSectionForm({
    *  modal still uses unchanged, so this is opt-in rather than a global
    *  behaviour change to a component more than one screen renders. */
   oneAtATime?: boolean;
+  /** Whether this section offers Skip at all — false for the three Core
+   *  Tinnitus Assessment instruments (VAS, THI, TFI), which are mandatory and
+   *  never treated as complete when skipped, so no control is offered whose
+   *  result the module would refuse to honour. Defaults to true, preserving
+   *  every existing caller (the Results page's "complete a skipped
+   *  instrument" modal only ever reopens instruments that can be skipped). */
+  allowSkip?: boolean;
 }) {
   const { t } = useTranslation();
   const spec = section.registryKey ? instruments?.[section.registryKey] : null;
@@ -211,10 +271,12 @@ export function InstrumentSectionForm({
         setAnswers={setAnswers}
         onSkip={onSkip}
         onSubmit={onSubmit}
+        onProgress={onProgress}
         submitLabel={submitLabel}
         saving={saving}
         isVas={isVas}
         startAtLastPage={startAtLastPage}
+        allowSkip={allowSkip}
       />
     );
   }
@@ -371,9 +433,13 @@ export function InstrumentSectionForm({
         <hr className="rule" />
 
         <div className="row row--between">
-          <button type="button" className="btn" onClick={onSkip} disabled={saving}>
-            {t("assessment.module2.skip", { defaultValue: `Skip ${section.instrumentAbbrev}` })}
-          </button>
+          {allowSkip ? (
+            <button type="button" className="btn" onClick={onSkip} disabled={saving}>
+              {t("assessment.module2.skip", { defaultValue: `Skip ${section.instrumentAbbrev}` })}
+            </button>
+          ) : (
+            <span />
+          )}
           <button
             type="button"
             className="btn btn--primary"
@@ -385,9 +451,9 @@ export function InstrumentSectionForm({
         </div>
         {!allAnswered && items.length > 0 && (
           <p className="meta dim" style={{ fontSize: "var(--fs-micro)" }}>
-            {t("assessment.module2.answerAll", {
-              defaultValue: "Answer every item to continue, or choose Skip.",
-            })}
+            {allowSkip
+              ? t("assessment.module2.answerAll", { defaultValue: "Answer every item to continue, or choose Skip." })
+              : t("assessment.module2.answerAllRequired", { defaultValue: "Answer every item to continue — this assessment is required." })}
           </p>
         )}
       </div>
@@ -411,10 +477,12 @@ function GuidedInstrumentSectionForm({
   setAnswers,
   onSkip,
   onSubmit,
+  onProgress,
   submitLabel,
   saving,
   isVas,
   startAtLastPage,
+  allowSkip = true,
 }: {
   section: Module2Section;
   spec: InstrumentSpec | null | undefined;
@@ -423,10 +491,12 @@ function GuidedInstrumentSectionForm({
   setAnswers: React.Dispatch<React.SetStateAction<Record<string, number>>>;
   onSkip(): void;
   onSubmit(answers: Record<string, number>): void;
+  onProgress?(answers: Record<string, number>): void;
   submitLabel: string;
   saving?: boolean;
   isVas: boolean;
   startAtLastPage?: boolean;
+  allowSkip?: boolean;
 }) {
   const { t } = useTranslation();
   // Pages, not raw items: the ISI's `isi1a`/`isi1b`/`isi1c` share `group:
@@ -436,8 +506,17 @@ function GuidedInstrumentSectionForm({
   const pages = useMemo(() => groupItemsIntoPages(items), [items]);
   // How far the patient has *reached*, distinct from how many pages are
   // answered — going back and changing an earlier answer must not shrink the
-  // set of questions Back can reach.
-  const [index, setIndex] = useState(() => (startAtLastPage ? Math.max(0, pages.length - 1) : 0));
+  // set of questions Back can reach. A section reopened with some answers
+  // already on file (an "in_progress" resume) starts at the first page that
+  // is not yet fully answered, rather than at page one — the same seeded
+  // `answers` a completed section restores for View/Retake, here used to
+  // pick up where the patient actually left off instead of re-asking
+  // questions they already answered.
+  const [index, setIndex] = useState(() => {
+    if (startAtLastPage) return Math.max(0, pages.length - 1);
+    const firstUnanswered = pages.findIndex((p) => !p.every((it) => answers[it.id] !== undefined));
+    return firstUnanswered === -1 ? 0 : firstUnanswered;
+  });
   const page = pages[index] ?? [];
   const item = page.length === 1 ? page[0] : undefined;
   const isLast = index === pages.length - 1;
@@ -448,8 +527,12 @@ function GuidedInstrumentSectionForm({
   }
 
   function advanceOrSubmit(nextAnswers: Record<string, number>) {
-    if (isLast) onSubmit(nextAnswers);
-    else setIndex((i) => i + 1);
+    if (isLast) {
+      onSubmit(nextAnswers);
+    } else {
+      onProgress?.(nextAnswers);
+      setIndex((i) => i + 1);
+    }
   }
 
   /** Single-select items advance immediately on selection — no separate
@@ -595,9 +678,11 @@ function GuidedInstrumentSectionForm({
           <button type="button" className="btn btn--ghost" onClick={goBack} disabled={isFirst || saving}>
             ← {t("common.back")}
           </button>
-          <button type="button" className="btn" onClick={onSkip} disabled={saving}>
-            {t("assessment.module2.skip", { defaultValue: `Skip ${section.instrumentAbbrev}` })}
-          </button>
+          {allowSkip && (
+            <button type="button" className="btn" onClick={onSkip} disabled={saving}>
+              {t("assessment.module2.skip", { defaultValue: `Skip ${section.instrumentAbbrev}` })}
+            </button>
+          )}
         </div>
       </div>
     </Panel>
@@ -868,65 +953,143 @@ function PhqFunctionalDifficultyStep({
 }
 
 /* ------------------------------------------------------------------------- */
-/* A stub section: the honest "not yet available" notice.                    */
+/* The status badge every card shows — text first, never color alone.        */
 /* ------------------------------------------------------------------------- */
-function StubSection({ section, onNext }: { section: Module2Section; onNext(): void }) {
+function StatusBadge({ status }: { status: Module2Status | "unavailable" }) {
   const { t } = useTranslation();
+  const config: Record<string, { label: string; tone: "ok" | "signal" | "ghost" | "warn" }> = {
+    not_started: { label: t("assessment.module2.statusNotStarted", { defaultValue: "Not started" }), tone: "ghost" },
+    in_progress: { label: t("assessment.module2.statusInProgress", { defaultValue: "In progress" }), tone: "signal" },
+    completed: { label: t("assessment.module2.statusCompleted", { defaultValue: "Completed" }), tone: "ok" },
+    skipped: { label: t("assessment.module2.statusSkipped", { defaultValue: "Skipped" }), tone: "warn" },
+    unavailable: { label: t("assessment.module2.statusUnavailable", { defaultValue: "Not available" }), tone: "ghost" },
+  };
+  const c = config[status] ?? config.not_started;
   return (
-    <Panel title={`${section.instrumentFullName} — ${section.instrumentAbbrev}`} bracketed tone="warn">
-      <div className="stack stack-4">
-        <p className="lead" style={{ fontSize: "var(--fs-body)" }}>
+    <Chip tone={c.tone}>
+      {status === "completed" && <IconCheck size={11} />} {c.label}
+    </Chip>
+  );
+}
+
+/**
+ * One assessment card in the Core or Optional menu — category, instrument
+ * name, current status, and its action(s). A required (Core) card never
+ * offers Skip; an optional one always does unless already skipped or
+ * completed. The stub (WHOQOL-BREF) card shows the honest "not yet
+ * available" notice directly, in place of any action.
+ */
+function AssessmentMenuCard({
+  section,
+  status,
+  onOpen,
+  onSkip,
+}: {
+  section: Module2Section;
+  status: Module2Status;
+  onOpen(): void;
+  onSkip(): void;
+}) {
+  const { t } = useTranslation();
+
+  if (section.kind === "stub") {
+    return (
+      <div className="stack stack-2" style={{ padding: "var(--s4) 0" }}>
+        <div className="row row--between row--baseline">
+          <div className="stack stack-1">
+            <strong>{section.instrumentAbbrev}</strong>
+            <span className="meta">{section.category}</span>
+          </div>
+          <StatusBadge status="unavailable" />
+        </div>
+        <p className="meta dim" style={{ margin: 0 }}>
           {t("assessment.module2.stubNotice", {
             defaultValue: `${section.instrumentAbbrev} is not yet available in this system.`,
             instrument: section.instrumentAbbrev,
           })}
         </p>
-        <p className="meta">
-          {t("assessment.module2.stubBody", {
-            defaultValue:
-              "No questions are shown here because this instrument has not been implemented yet. Nothing has been skipped or scored — this result will simply say it is unavailable until it is added.",
-          })}
-        </p>
-        <div className="row row--end">
-          <button type="button" className="btn btn--primary" onClick={onNext}>
-            {t("common.next")} →
-          </button>
-        </div>
       </div>
-    </Panel>
+    );
+  }
+
+  const startLabel = section.required
+    ? t("assessment.module2.start", { defaultValue: "Start" })
+    : t("assessment.module2.completeNow", { defaultValue: "Complete now" });
+  const continueLabel = t("common.continue", { defaultValue: "Continue" });
+  const retakeLabel = t("assessment.module2.viewRetake", { defaultValue: "View / Retake" });
+  const skipLabel = t("assessment.module2.skipDoLater", { defaultValue: "Skip / Do later" });
+
+  return (
+    <div className="stack stack-3" style={{ padding: "var(--s4) 0" }}>
+      <div className="row row--between row--baseline">
+        <div className="stack stack-1">
+          <span className="row row--tight" style={{ alignItems: "baseline" }}>
+            <strong>{section.instrumentAbbrev}</strong>
+            {section.required && (
+              <Chip tone="signal">{t("assessment.module2.required", { defaultValue: "Required" })}</Chip>
+            )}
+          </span>
+          <span className="meta">{section.category}</span>
+        </div>
+        <StatusBadge status={status} />
+      </div>
+      <div className="row row--tight">
+        <button type="button" className="btn btn--primary btn--sm" onClick={onOpen}>
+          {status === "completed"
+            ? retakeLabel
+            : status === "in_progress"
+              ? continueLabel
+              : status === "skipped"
+                ? t("assessment.module2.completeNow", { defaultValue: "Complete now" })
+                : startLabel}
+        </button>
+        {!section.required && (status === "not_started" || status === "in_progress") && (
+          <button type="button" className="btn btn--sm" onClick={onSkip}>
+            {skipLabel}
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
 /* ------------------------------------------------------------------------- */
-/* The eight-section wizard.                                                 */
+/* The two-section "About Your Tinnitus" menu, and the single-instrument     */
+/* form each card opens.                                                     */
 /* ------------------------------------------------------------------------- */
 export default function AboutYourTinnitus({
   instruments,
   initial,
   onSectionSave,
   onAllDone,
-  startAt,
 }: {
   instruments: Record<string, InstrumentSpec> | null;
   initial: Module2InitialData;
   /** Persists one real section's outcome. `items` is omitted entirely on skip. */
-  onSectionSave(domainKey: string, items: Record<string, number> | undefined, status: "completed" | "skipped"): Promise<void>;
+  onSectionSave(
+    domainKey: string,
+    items: Record<string, number> | undefined,
+    status: "in_progress" | "completed" | "skipped"
+  ): Promise<void>;
+  /** Reachable only once the three Core Tinnitus Assessment instruments are
+   *  all `completed` — see `coreComplete` below. */
   onAllDone(): void;
-  /** Jump straight to one section — used when re-entering to complete a single skipped instrument. */
-  startAt?: string;
 }) {
   const { t } = useTranslation();
-  const startIndex = Math.max(0, MODULE2_SECTIONS.findIndex((s) => s.key === startAt));
-  const [index, setIndex] = useState(startIndex);
-  const [maxVisited, setMaxVisited] = useState(startIndex);
   const [status, setStatus] = useState<Record<string, Module2Status>>(() => {
     const seeded: Record<string, Module2Status> = {};
     for (const s of MODULE2_SECTIONS) {
       const raw = initial.questionnaire_status?.[s.key];
-      seeded[s.key] = raw === "completed" || raw === "skipped" ? raw : "not_started";
+      seeded[s.key] =
+        raw === "completed" || raw === "skipped" || raw === "in_progress" ? raw : "not_started";
     }
     return seeded;
   });
+  // null = the two-section menu. Otherwise the key of the one instrument
+  // currently open — chosen from a card rather than reached by walking a
+  // fixed sequence, so a patient can do the eight in any order and return to
+  // the menu after each one instead of always advancing to the next.
+  const [activeKey, setActiveKey] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   // The PHQ-9's completed 9 symptom answers, held here while the separate
   // functional-difficulty question is asked — never submitted as a 10th
@@ -946,36 +1109,34 @@ export default function AboutYourTinnitus({
   const [painStepOpen, setPainStepOpen] = useState(false);
   const painSpec = instruments?.vas?.pain_scale;
 
-  const section = MODULE2_SECTIONS[index];
-  const isLast = index === MODULE2_SECTIONS.length - 1;
+  const activeSection = activeKey ? MODULE2_SECTIONS.find((s) => s.key === activeKey) : undefined;
 
-  function advance() {
-    if (isLast) {
-      onAllDone();
-      return;
-    }
-    const next = index + 1;
-    setIndex(next);
-    setMaxVisited((m) => Math.max(m, next));
+  const coreDone = MODULE2_CORE_SECTIONS.filter((s) => status[s.key] === "completed").length;
+  const coreComplete = coreDone === MODULE2_CORE_SECTIONS.length;
+  const optionalDone = MODULE2_OPTIONAL_SECTIONS.filter((s) => status[s.key] === "completed").length;
+  const optionalSkipped = MODULE2_OPTIONAL_SECTIONS.filter((s) => status[s.key] === "skipped").length;
+
+  function returnToMenu() {
+    setActiveKey(null);
+    setPendingPhq9Answers(null);
+    setVasDraft(null);
     setPainStepOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  // Both handlers swallow a failed save rather than letting it propagate: the
-  // caller (`onSectionSave`) already reports the error to the patient (a
-  // toast, in `Assessment.tsx`), and the only thing left to decide here is
-  // whether to advance. On failure the answers stay on screen and the section
-  // stays put so the patient can retry, instead of silently losing them by
-  // moving on regardless.
+  // All three handlers swallow a failed save rather than letting it
+  // propagate: the caller (`onSectionSave`) already reports the error to the
+  // patient (a toast, in `Assessment.tsx`), and the only thing left to decide
+  // here is whether to return to the menu. On failure the answers stay on
+  // screen and the section stays open so the patient can retry, instead of
+  // silently losing them by moving on regardless.
   async function handleSkip() {
+    if (!activeSection) return;
     setSaving(true);
     try {
-      await onSectionSave(section.key, undefined, "skipped");
-      setStatus((prev) => ({ ...prev, [section.key]: "skipped" }));
-      setPendingPhq9Answers(null);
-      setVasDraft(null);
-      setPainStepOpen(false);
-      advance();
+      await onSectionSave(activeSection.key, undefined, "skipped");
+      setStatus((prev) => ({ ...prev, [activeSection.key]: "skipped" }));
+      returnToMenu();
     } catch {
       // already reported to the patient by the caller
     } finally {
@@ -983,28 +1144,49 @@ export default function AboutYourTinnitus({
     }
   }
 
+  /** Saves whatever is answered so far without leaving the section — how a
+   *  page-advance mid-questionnaire is recorded as "in_progress", so leaving
+   *  and returning later resumes with those answers restored. Runs in the
+   *  background: a patient does not wait on this to keep answering, and its
+   *  own errors are already toasted by the caller, so nothing here needs to
+   *  block navigation on it succeeding.
+   *
+   *  A no-op while retaking an already-*completed* instrument: an unfinished
+   *  retake must not downgrade a genuine completed result to "in progress"
+   *  on the record (and so must never fire this save at all — not even with
+   *  the answers, since a retake's partial page could otherwise overwrite a
+   *  fully answered instrument's items with an incomplete subset if the
+   *  patient abandons the retake before resubmitting). */
+  function handleProgress(answers: Record<string, number>) {
+    if (!activeSection) return;
+    const key = activeSection.key;
+    if (status[key] === "completed") return;
+    setStatus((prev) => ({ ...prev, [key]: "in_progress" }));
+    onSectionSave(key, answers, "in_progress").catch(() => {
+      // already reported to the patient by the caller
+    });
+  }
+
   async function handleSubmit(answers: Record<string, number>) {
+    if (!activeSection) return;
     // The PHQ-9 has one more, separate, non-scored question after its 9 —
     // hold the completed symptom answers and ask it before actually saving.
-    if (section.key === "phq9" && pendingPhq9Answers === null) {
+    if (activeSection.key === "phq9" && pendingPhq9Answers === null) {
       setPendingPhq9Answers(answers);
       return;
     }
     // The VAS has the pain faces scale after its four ratings, for the same
     // reason and on the same terms — see `VasPainStep`.
-    if (section.key === "vas" && painSpec && !painStepOpen) {
+    if (activeSection.key === "vas" && painSpec && !painStepOpen) {
       setVasDraft(answers);
       setPainStepOpen(true);
       return;
     }
     setSaving(true);
     try {
-      await onSectionSave(section.key, answers, "completed");
-      setStatus((prev) => ({ ...prev, [section.key]: "completed" }));
-      setPendingPhq9Answers(null);
-      setVasDraft(null);
-      setPainStepOpen(false);
-      advance();
+      await onSectionSave(activeSection.key, answers, "completed");
+      setStatus((prev) => ({ ...prev, [activeSection.key]: "completed" }));
+      returnToMenu();
     } catch {
       // already reported to the patient by the caller
     } finally {
@@ -1024,89 +1206,174 @@ export default function AboutYourTinnitus({
     pss10: initial.pss10_items,
   };
 
+  /* -------------------------------------------------------------------- */
+  /* One instrument open — the exact same single-instrument form the old   */
+  /* linear flow used, just entered from a card instead of "Next".         */
+  /* -------------------------------------------------------------------- */
+  if (activeSection) {
+    return (
+      <div className="stack stack-5">
+        <button type="button" className="btn btn--ghost btn--sm" onClick={returnToMenu} disabled={saving}>
+          ← {t("assessment.module2.backToOverview", { defaultValue: "Back to overview" })}
+        </button>
+
+        <Panel tight tone="sunken">
+          <div className="row row--between row--baseline">
+            <span className="label label--signal">{activeSection.category}</span>
+            {activeSection.required && (
+              <Chip tone="signal">{t("assessment.module2.required", { defaultValue: "Required" })}</Chip>
+            )}
+          </div>
+        </Panel>
+
+        {activeSection.key === "vas" && painSpec && painStepOpen ? (
+          <VasPainStep
+            spec={painSpec}
+            value={vasDraft?.[painSpec.id]}
+            onChange={(v) => setVasDraft((prev) => ({ ...(prev ?? {}), [painSpec.id]: v }))}
+            onBack={() => setPainStepOpen(false)}
+            onSubmit={() => handleSubmit(vasDraft ?? {})}
+            submitLabel={t("assessment.module2.finish", { defaultValue: "Finish" })}
+            saving={saving}
+          />
+        ) : activeSection.key === "phq9" && pendingPhq9Answers !== null ? (
+          <PhqFunctionalDifficultyStep
+            spec={instruments?.phq9 ?? null}
+            saving={saving}
+            onSelect={(value) => handleSubmit({ ...pendingPhq9Answers, phq9_functional_difficulty: value })}
+          />
+        ) : (
+          <InstrumentSectionForm
+            key={activeSection.key}
+            section={activeSection}
+            instruments={instruments}
+            initialAnswers={initialAnswersFor[activeSection.key]}
+            // Back out of the pain scale returns to the fourth VAS rating, not
+            // to the first: the patient's place in the section is where they
+            // left it, and re-walking three answered questions to get back to
+            // the trailing one is not a Back button.
+            startAtLastPage={activeSection.key === "vas" && vasDraft !== null}
+            onSkip={handleSkip}
+            onSubmit={handleSubmit}
+            onProgress={handleProgress}
+            submitLabel={t("assessment.module2.finish", { defaultValue: "Finish" })}
+            saving={saving}
+            oneAtATime
+            allowSkip={!activeSection.required}
+          />
+        )}
+      </div>
+    );
+  }
+
+  /* -------------------------------------------------------------------- */
+  /* The menu: Core Tinnitus Assessment, then Optional Wellbeing Assessment. */
+  /* -------------------------------------------------------------------- */
   return (
     <div className="stack stack-5">
-      <div className="steprail">
-        {MODULE2_SECTIONS.map((s, i) => (
-          <button
-            key={s.key}
-            type="button"
-            className="steprail__step"
-            data-state={i === index ? "active" : status[s.key] === "completed" ? "done" : "todo"}
-            disabled={i > maxVisited}
-            onClick={() => {
-              if (i > maxVisited) return;
-              // Jumping sections always lands on the section's questions, not
-              // on a trailing step left open from last time through it.
-              setPainStepOpen(false);
-              setIndex(i);
-            }}
-          >
-            <span className="steprail__n">
-              {status[s.key] === "completed" ? (
-                <IconCheck size={11} />
-              ) : status[s.key] === "skipped" ? (
-                "—"
-              ) : (
-                "○"
-              )}
-            </span>
-            <span className="steprail__label">{s.instrumentAbbrev}</span>
-          </button>
-        ))}
-      </div>
+      <p className="lead" style={{ fontSize: "var(--fs-body)", maxWidth: "48em" }}>
+        {t("assessment.module2.intro", {
+          defaultValue:
+            "About Your Tinnitus is in two parts: a required Core Tinnitus Assessment, and an Optional Wellbeing Assessment covering sleep, anxiety, mood, stress, and quality of life.",
+        })}
+      </p>
 
-      <Panel tight tone="sunken">
-        <div className="row row--between row--baseline">
-          <span className="label label--signal">{section.category}</span>
-          <span className="meta">
-            {t("assessment.module2.overallProgress", {
-              current: index + 1,
-              total: MODULE2_SECTIONS.length,
-              defaultValue: `Overall: ${index + 1} of ${MODULE2_SECTIONS.length} questionnaires`,
+      <Panel
+        bracketed
+        title={t("assessment.module2.coreTitle", { defaultValue: "Core Tinnitus Assessment" })}
+        aside={<Chip tone="signal">{t("assessment.module2.required", { defaultValue: "Required" })}</Chip>}
+      >
+        <div className="stack stack-4">
+          <p className="meta" style={{ margin: 0 }}>
+            {t("assessment.module2.coreBody", {
+              defaultValue: "These assessments establish your basic tinnitus profile.",
             })}
-          </span>
+          </p>
+          <div className="stack stack-1">
+            {MODULE2_CORE_SECTIONS.map((s, i) => (
+              <div key={s.key} style={i > 0 ? { borderTop: "1px solid var(--rule, #2a2f37)" } : undefined}>
+                <AssessmentMenuCard
+                  section={s}
+                  status={status[s.key]}
+                  onOpen={() => setActiveKey(s.key)}
+                  onSkip={() => {}}
+                />
+              </div>
+            ))}
+          </div>
+          <hr className="rule rule--tight" />
+          <p className="meta" style={{ margin: 0, fontWeight: coreComplete ? 700 : 400 }}>
+            {coreComplete
+              ? t("assessment.module2.coreComplete", { defaultValue: "Core tinnitus profile complete." })
+              : t("assessment.module2.coreIncomplete", {
+                  count: coreDone,
+                  total: MODULE2_CORE_SECTIONS.length,
+                  defaultValue: `Core tinnitus profile incomplete (${coreDone} / ${MODULE2_CORE_SECTIONS.length} complete).`,
+                })}
+          </p>
         </div>
       </Panel>
 
-      {section.kind === "stub" ? (
-        <StubSection section={section} onNext={advance} />
-      ) : section.key === "vas" && painSpec && painStepOpen ? (
-        <VasPainStep
-          spec={painSpec}
-          value={vasDraft?.[painSpec.id]}
-          onChange={(v) => setVasDraft((prev) => ({ ...(prev ?? {}), [painSpec.id]: v }))}
-          onBack={() => setPainStepOpen(false)}
-          onSubmit={() => handleSubmit(vasDraft ?? {})}
-          submitLabel={`${t("common.next")} →`}
-          saving={saving}
-        />
-      ) : section.key === "phq9" && pendingPhq9Answers !== null ? (
-        <PhqFunctionalDifficultyStep
-          spec={instruments?.phq9 ?? null}
-          saving={saving}
-          onSelect={(value) =>
-            handleSubmit({ ...pendingPhq9Answers, phq9_functional_difficulty: value })
-          }
-        />
-      ) : (
-        <InstrumentSectionForm
-          key={section.key}
-          section={section}
-          instruments={instruments}
-          initialAnswers={initialAnswersFor[section.key]}
-          // Back out of the pain scale returns to the fourth VAS rating, not
-          // to the first: the patient's place in the section is where they
-          // left it, and re-walking three answered questions to get back to
-          // the trailing one is not a Back button.
-          startAtLastPage={section.key === "vas" && vasDraft !== null}
-          onSkip={handleSkip}
-          onSubmit={handleSubmit}
-          submitLabel={isLast ? t("assessment.module2.finish", { defaultValue: "Finish" }) : `${t("common.next")} →`}
-          saving={saving}
-          oneAtATime
-        />
-      )}
+      <Panel
+        bracketed
+        title={t("assessment.module2.optionalTitle", { defaultValue: "Optional Wellbeing Assessment" })}
+        aside={<Chip tone="ghost">{t("assessment.module2.optional", { defaultValue: "Optional" })}</Chip>}
+      >
+        <div className="stack stack-4">
+          <p className="meta" style={{ margin: 0 }}>
+            {t("assessment.module2.optionalBody", {
+              defaultValue:
+                "These assessments provide additional information about sleep, anxiety, mood, stress, and quality of life. Complete them now, or skip and do them later — none of these are required to continue.",
+            })}
+          </p>
+          <div className="stack stack-1">
+            {MODULE2_OPTIONAL_SECTIONS.map((s, i) => (
+              <div key={s.key} style={i > 0 ? { borderTop: "1px solid var(--rule, #2a2f37)" } : undefined}>
+                <AssessmentMenuCard
+                  section={s}
+                  status={status[s.key]}
+                  onOpen={() => setActiveKey(s.key)}
+                  onSkip={async () => {
+                    setSaving(true);
+                    try {
+                      await onSectionSave(s.key, undefined, "skipped");
+                      setStatus((prev) => ({ ...prev, [s.key]: "skipped" }));
+                    } catch {
+                      // already reported to the patient by the caller
+                    } finally {
+                      setSaving(false);
+                    }
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+          <hr className="rule rule--tight" />
+          <p className="meta" style={{ margin: 0 }}>
+            {t("assessment.module2.optionalProgress", {
+              done: optionalDone,
+              total: MODULE2_OPTIONAL_SECTIONS.length,
+              skipped: optionalSkipped,
+              defaultValue: `Optional: ${optionalDone} / ${MODULE2_OPTIONAL_SECTIONS.length} complete, ${optionalSkipped} / ${MODULE2_OPTIONAL_SECTIONS.length} skipped.`,
+            })}
+          </p>
+        </div>
+      </Panel>
+
+      <div className="stack stack-2">
+        <div className="row row--end">
+          <button type="button" className="btn btn--primary" onClick={onAllDone} disabled={!coreComplete}>
+            {t("assessment.module2.continueToHearing", { defaultValue: "Continue" })} →
+          </button>
+        </div>
+        {!coreComplete && (
+          <p className="meta dim" style={{ textAlign: "right" }}>
+            {t("assessment.module2.continueBlocked", {
+              defaultValue: "Complete VAS, THI and TFI to continue — optional assessments do not block this.",
+            })}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

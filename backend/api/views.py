@@ -979,15 +979,27 @@ POST_COMPLETE_EDITABLE_FIELDS = frozenset(
     }
 )
 
-MODULE2_DOMAINS: list[dict[str, str]] = [
-    {"key": "vas", "category": "Tinnitus Severity", "instrument": "VAS / NRS", "kind": "real"},
-    {"key": "thi", "category": "Tinnitus Handicap", "instrument": "THI", "kind": "real"},
-    {"key": "tfi", "category": "Tinnitus Functional Impact", "instrument": "TFI", "kind": "real"},
-    {"key": "isi", "category": "Sleep & Insomnia", "instrument": "ISI", "kind": "real"},
-    {"key": "gad7", "category": "Anxiety", "instrument": "GAD-7", "kind": "real"},
-    {"key": "phq9", "category": "Mood / Depression", "instrument": "PHQ-9", "kind": "real"},
-    {"key": "pss10", "category": "Perceived Stress", "instrument": "PSS", "kind": "real"},
-    {"key": "eq5d5l", "category": "Health-Related Quality of Life", "instrument": "EQ-5D-5L", "kind": "stub"},
+MODULE2_DOMAINS: list[dict[str, Any]] = [
+    # `required` splits the eight result categories into the Core Tinnitus
+    # Assessment (VAS, THI, TFI — mandatory) and the Optional Wellbeing
+    # Assessment (the remaining five) that "About Your Tinnitus" groups them
+    # into. This is metadata about the *instrument*, not the patient's data,
+    # so it is a static flag here rather than anything computed per-assessment.
+    {"key": "vas", "category": "Tinnitus Severity", "instrument": "VAS / NRS", "kind": "real", "required": True},
+    {"key": "thi", "category": "Tinnitus Handicap", "instrument": "THI", "kind": "real", "required": True},
+    {"key": "tfi", "category": "Tinnitus Functional Impact", "instrument": "TFI", "kind": "real", "required": True},
+    {"key": "isi", "category": "Sleep & Insomnia", "instrument": "ISI", "kind": "real", "required": False},
+    {"key": "gad7", "category": "Anxiety", "instrument": "GAD-7", "kind": "real", "required": False},
+    {"key": "phq9", "category": "Mood / Depression", "instrument": "PHQ-9", "kind": "real", "required": False},
+    {"key": "pss10", "category": "Perceived Stress", "instrument": "PSS-10", "kind": "real", "required": False},
+    # WHOQOL-BREF has no validated item content anywhere in this codebase —
+    # confirmed by a repo-wide search (no "whoqol" hits at all). This was
+    # "eq5d5l" (EQ-5D-5L), itself never more than the same honest stub: no
+    # EQ-5D-5L item bank, scoring, or model field exists either, so this is a
+    # rename of an empty placeholder's label, not a relabelling of real
+    # EQ-5D-5L content or data — there is no EQ-5D-5L data anywhere to lose or
+    # mislabel. Still `kind: "stub"`: nothing here is fabricated.
+    {"key": "whoqol_bref", "category": "Quality of Life", "instrument": "WHOQOL-BREF", "kind": "stub", "required": False},
 ]
 
 

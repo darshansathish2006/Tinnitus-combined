@@ -400,14 +400,17 @@ export default function Assessment() {
 
   /**
    * "About Your Tinnitus" (Module 2) — VAS, THI, TFI, ISI, GAD-7, PHQ-9 and
-   * PSS-10 are each saved the moment their section is answered or skipped,
-   * rather than held in memory for one save at the end. A patient who stops
-   * partway through this module still has every section they did finish on
-   * the record, and a skipped section is recorded as skipped immediately
-   * rather than only if they happen to reach the last section. EQ-5D-5L is
-   * not saved here at all — that section has no item content to save (see
-   * `AboutYourTinnitus`) and is never represented as skipped, since nothing
-   * was actually offered and declined.
+   * PSS-10 are each saved the moment their section is answered, partially
+   * answered, or skipped, rather than held in memory for one save at the end.
+   * A patient who stops partway through an optional section still has that
+   * partial progress on the record as `questionnaire_status[key] =
+   * "in_progress"` (so leaving and returning resumes it, rather than losing
+   * it), a patient who stops partway through the whole module still has every
+   * section they did finish on the record, and a skipped section is recorded
+   * as skipped immediately rather than only if they happen to reach the last
+   * section. WHOQOL-BREF is not saved here at all — that section has no item
+   * content to save (see `AboutYourTinnitus`) and is never represented as
+   * skipped, since nothing was actually offered and declined.
    */
   const MODULE2_ITEMS_FIELD: Record<string, string> = {
     vas: "vas",
@@ -422,11 +425,11 @@ export default function Assessment() {
   async function saveModule2Section(
     domainKey: string,
     items: Record<string, number> | undefined,
-    sectionStatus: "completed" | "skipped"
+    sectionStatus: "in_progress" | "completed" | "skipped"
   ) {
     const field = MODULE2_ITEMS_FIELD[domainKey];
     const body: Record<string, unknown> = { questionnaire_status: { [domainKey]: sectionStatus } };
-    if (sectionStatus === "completed" && field && items) {
+    if (sectionStatus !== "skipped" && field && items) {
       // The PHQ-9's separate, non-scored functional-difficulty answer travels
       // in the same `items` dict (see `AboutYourTinnitus`'s
       // `PhqFunctionalDifficultyStep`) but is never part of `phq9_items` —
@@ -448,6 +451,8 @@ export default function Assessment() {
       }
     }
     try {
+      // Only a genuinely completed section marks its module done — an
+      // in-progress autosave must not make the section look finished.
       await saveModule(body, sectionStatus === "completed" ? [domainKey] : []);
     } catch (error) {
       toast(error instanceof ApiError ? error.message : t("assessment.toast.answersFailed"), "crit");
@@ -791,12 +796,14 @@ export default function Assessment() {
 
       {/* ============================================= 1 · questionnaire === */}
       {/* "About Your Tinnitus" — the patient's own account of the percept and
-          its impact, before it is measured. Eight result categories in a fixed
-          order (Tinnitus Severity, Tinnitus Handicap, Tinnitus Functional
-          Impact, Sleep & Insomnia, Anxiety, Mood/Depression, Perceived Stress,
-          Health-Related Quality of Life); this is also where the sleep,
+          its impact, before it is measured. Eight result categories in two
+          groups: the required Core Tinnitus Assessment (Tinnitus Severity,
+          Tinnitus Handicap, Tinnitus Functional Impact) and the Optional
+          Wellbeing Assessment (Sleep & Insomnia, Anxiety, Mood/Depression,
+          Perceived Stress, Quality of Life); this is also where the sleep,
           anxiety, mood and stress content that used to be a separate
-          "Sleep, mood and stress" step now lives. */}
+          "Sleep, mood and stress" step now lives. `onAllDone` only fires once
+          the three Core instruments are complete — see `AboutYourTinnitus`. */}
       {step === 1 && (
         <AboutYourTinnitus
           instruments={instruments.data?.instruments ?? null}

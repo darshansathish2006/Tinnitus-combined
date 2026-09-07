@@ -1123,6 +1123,10 @@ export default function Results() {
             onSubmit={(answers) => saveCompletedInstrument(completingKey, answers, "completed")}
             submitLabel={t("common.save", { defaultValue: "Save" })}
             saving={completingSaving}
+            // The three Core Tinnitus Assessment instruments (VAS, THI, TFI)
+            // are mandatory and never treated as complete when skipped — see
+            // `AboutYourTinnitus` — so reopening one here offers no Skip either.
+            allowSkip={!MODULE2_SECTIONS.find((s) => s.key === completingKey)?.required}
           />
         )}
       </Modal>

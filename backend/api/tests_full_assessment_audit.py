@@ -155,13 +155,33 @@ class ThiGad7Pss10VasApiTests(TestCase):
         # The pain question is never one of the four scored tinnitus scales.
         self.assertNotIn("vas_pain", [item["id"] for item in registry["vas"]["items"]])
 
-    def test_eq5d5l_remains_an_honest_stub(self):
+    def test_whoqol_bref_remains_an_honest_stub(self):
+        # Renamed from "eq5d5l" during the About Your Tinnitus two-section
+        # restructuring - WHOQOL-BREF has no validated item content anywhere
+        # in this codebase (repo-wide search found zero "whoqol" hits), so
+        # this stays a stub rather than being backed by fabricated content.
         self.assertEqual(self._finalise().status_code, 200)
         report = self._report().json()
-        domain = next(d for d in report["about_your_tinnitus"] if d["key"] == "eq5d5l")
+        domain = next(d for d in report["about_your_tinnitus"] if d["key"] == "whoqol_bref")
+        self.assertEqual(domain["instrument"], "WHOQOL-BREF")
         self.assertEqual(domain["kind"], "stub")
         self.assertFalse(domain["available"])
         self.assertIsNone(domain["score"])
+        self.assertFalse(domain["required"])
+
+    def test_core_vs_optional_required_flags(self):
+        report = self._report().json()
+        domains = {d["key"]: d for d in report["about_your_tinnitus"]}
+        self.assertEqual({k for k, d in domains.items() if d["required"]}, {"vas", "thi", "tfi"})
+        self.assertEqual(
+            {k for k, d in domains.items() if not d["required"]},
+            {"isi", "gad7", "phq9", "pss10", "whoqol_bref"},
+        )
+
+    def test_pss10_instrument_label(self):
+        report = self._report().json()
+        domain = next(d for d in report["about_your_tinnitus"] if d["key"] == "pss10")
+        self.assertEqual(domain["instrument"], "PSS-10")
 
 
 class SkipResumeAllInstrumentsTests(TestCase):
@@ -433,3 +453,98 @@ class DailyCheckInTests(TestCase):
         self.client.post("/api/monitoring/check-in", {"on_date": today, "mood": 5}, format="json")
         deleted = self.client.delete(f"/api/monitoring/check-in?on_date={today}")
         self.assertEqual(deleted.status_code, status.HTTP_204_NO_CONTENT)
+
+
+class AboutYourTinnitusTwoSectionTests(TestCase):
+    """The Core Tinnitus Assessment / Optional Wellbeing Assessment split:
+    `in_progress` autosave + resume, and skip never counting as complete for
+    a required core instrument — even via a direct API call that bypasses
+    the frontend's own "no Skip button on a core card" restriction."""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.token, self.aid = _register(self.client, "twosection")
+
+    def _report(self):
+        return self.client.get(f"/api/reports/clinical?assessment_id={self.aid}")
+
+    def _domain(self, key):
+        report = self._report().json()
+        return next(d for d in report["about_your_tinnitus"] if d["key"] == key)
+
+    def test_in_progress_autosave_persists_partial_answers_and_reports_in_progress(self):
+        # Only 2 of ISI's 7 scored components answered - a page-advance
+        # autosave mid-questionnaire, not a full submit.
+        partial = {"isi1a": 2, "isi1b": 3}
+        patched = self.client.patch(
+            f"/api/assessments/{self.aid}",
+            {"isi_items": partial, "questionnaire_status": {"isi": "in_progress"}},
+            format="json",
+        )
+        self.assertEqual(patched.status_code, 200)
+        self.assertEqual(patched.json()["isi_items"], partial, "partial answers must round-trip exactly")
+
+        domain = self._domain("isi")
+        self.assertEqual(domain["status"], "in_progress")
+        self.assertFalse(domain["available"])
+        self.assertIsNone(domain["score"], "no score is fabricated from a partial answer set")
+        self.assertIn("started but not finished", domain["reason"])
+
+        # Resume: more answers merge onto the same partial dict rather than
+        # replacing it, then a full submit completes and scores normally.
+        rest = {"isi1c": 1, "isi2": 0, "isi3": 2, "isi4": 1, "isi5": 3}
+        completed = self.client.patch(
+            f"/api/assessments/{self.aid}",
+            {"isi_items": rest, "questionnaire_status": {"isi": "completed"}},
+            format="json",
+        )
+        self.assertEqual(completed.status_code, 200)
+        self.assertEqual(
+            completed.json()["isi_items"], {**partial, **rest}, "the in-progress answers were not lost"
+        )
+        domain2 = self._domain("isi")
+        self.assertEqual(domain2["status"], "completed")
+        self.assertTrue(domain2["available"])
+        self.assertEqual(domain2["score"], sum({**partial, **rest}.values()))
+
+    def test_core_instrument_skipped_via_raw_api_is_never_reported_as_complete(self):
+        # Rule 4: even bypassing the frontend (which no longer offers a Skip
+        # control for VAS/THI/TFI) and PATCHing the status directly, a
+        # "skipped" core instrument must never be treated as complete.
+        for key in ("vas", "thi", "tfi"):
+            resp = self.client.patch(
+                f"/api/assessments/{self.aid}", {"questionnaire_status": {key: "skipped"}}, format="json"
+            )
+            self.assertEqual(resp.status_code, 200)
+            domain = self._domain(key)
+            self.assertEqual(domain["status"], "skipped")
+            self.assertFalse(domain["available"], f"{key} must not be available when skipped")
+            self.assertIsNone(domain["score"], f"{key} must not report a fabricated score when skipped")
+
+    def test_core_all_three_completed_is_distinguishable_from_partial(self):
+        self.client.patch(
+            f"/api/assessments/{self.aid}",
+            {
+                "vas": {"vas_loudness": 5, "vas_annoyance": 5, "vas_awareness": 5, "vas_sleep_interference": 5},
+                "thi_items": {"thi7": 2, "thi1": 2, "thi22": 2, "thi13": 2, "thi21": 2},
+                "questionnaire_status": {"vas": "completed", "thi": "completed"},
+            },
+            format="json",
+        )
+        # TFI still not started: core must read as incomplete.
+        statuses = {d["key"]: d["status"] for d in self._report().json()["about_your_tinnitus"]}
+        self.assertEqual(statuses["vas"], "completed")
+        self.assertEqual(statuses["thi"], "completed")
+        self.assertEqual(statuses["tfi"], "not_started")
+        core_complete = all(statuses[k] == "completed" for k in ("vas", "thi", "tfi"))
+        self.assertFalse(core_complete)
+
+        self.client.patch(
+            f"/api/assessments/{self.aid}",
+            {"tfi_items": {f"tfi{n}": (50 if n in (1, 3) else 5) for n in range(1, 26)},
+             "questionnaire_status": {"tfi": "completed"}},
+            format="json",
+        )
+        statuses2 = {d["key"]: d["status"] for d in self._report().json()["about_your_tinnitus"]}
+        core_complete2 = all(statuses2[k] == "completed" for k in ("vas", "thi", "tfi"))
+        self.assertTrue(core_complete2)
