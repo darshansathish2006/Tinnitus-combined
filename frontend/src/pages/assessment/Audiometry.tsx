@@ -1,5 +1,5 @@
 /**
- * Pure-tone audiometry step.
+ * Pure-tone audiometry step — Continuous Adaptive Audiometry.
  *
  * Drives `ThresholdTracker` (modified Hughson-Westlake) across a frequency
  * sequence for each ear. Three details separate this from a "click if you hear a
@@ -7,10 +7,26 @@
  *
  *  - **Randomised presentation timing.** The patient must not be able to predict
  *    when the tone arrives, or they will respond to the rhythm.
- *  - **Catch trials.** Every seventh presentation is silent. Responding to
+ *  - **Catch trials.** Every tenth presentation is silent. Responding to
  *    silence means the patient is guessing, and the whole audiogram is flagged.
  *  - **1 kHz retest.** The standard reliability check — the sequence starts and
  *    ends at 1 kHz and the two thresholds must agree within 10 dB.
+ *
+ * None of the above changed in this pass. What changed is `sessionPhase`, the
+ * layer wrapping the original per-frequency `phase` state machine
+ * (`idle`/`presenting`/`gap`/`done`, still exactly what it always was):
+ * previously each of the 14+ frequency/ear measurements needed its own
+ * manual "Start" press, because the tracker-rebuild effect below always put
+ * `phase` back to `idle` and waited. `sessionPhase` now makes one continuous
+ * session out of that: a patient presses Start once, on an intro screen, and
+ * the effect that rebuilds the tracker for each new frequency calls
+ * `present()` itself rather than waiting — so the test auto-advances through
+ * every frequency and both ears without another button press, unless the
+ * patient explicitly pauses. `sessionPhase` also adds a genuine Pause/Resume
+ * (distinct from the old "waiting for Start" idle state, which this replaces)
+ * and a Stop confirmation that preserves whatever has already been measured
+ * — see `onProgress`/`onExit` — rather than silently discarding it the way
+ * the existing "abandon the whole module" `onSkip` always has and still does.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -53,6 +69,52 @@ function interOctaveNeeded(thresholds: Record<string, number>): number[] {
     if (Math.abs(b - a) >= INTER_OCTAVE_GAP_DB) needed.push(freq);
   }
   return needed;
+}
+
+/**
+ * Where a resumed session picks up — the first not-yet-measured position in
+ * each ear's sequence, so returning to a session that already has thresholds
+ * on file (a page reload, or a patient who exited and came back) re-measures
+ * nothing that is already known, rather than restarting from the right ear's
+ * 1 kHz.
+ *
+ * One honest limitation, documented rather than worked around with a new
+ * persisted field: the 1 kHz retest and the ear's first 1 kHz measurement
+ * write to the same `audiogram["1000"]` key (the retest's value simply
+ * overwrites the first, exactly as it always has — see `finishFrequency`),
+ * so a resumed session cannot tell from the audiogram alone whether the
+ * retest already happened. Rather than guess, a session resuming at or past
+ * that point in the sequence always re-measures the retest — never fewer
+ * measurements than the protocol calls for, only possibly one harmless extra
+ * one, which matches "never sacrifice measurement integrity for speed."
+ */
+function resumePosition(
+  initialAudiogram: Record<Ear, Record<string, number>>
+): { ear: Ear; stepIndex: number; extraFreqs: Record<Ear, number[]> } {
+  const extraFreqs: Record<Ear, number[]> = {
+    right: interOctaveNeeded(initialAudiogram.right ?? {}),
+    left: interOctaveNeeded(initialAudiogram.left ?? {}),
+  };
+  const retestSlot = CORE_SEQUENCE.length - 1;
+  for (const ear of ["right", "left"] as const) {
+    const measured = initialAudiogram[ear] ?? {};
+    const sequence = [...CORE_SEQUENCE, ...extraFreqs[ear]];
+    // The retest slot (the final core-sequence index) is deliberately never
+    // considered "already measured" here — see the limitation above.
+    const firstUnmeasured = sequence.findIndex((f, i) => i !== retestSlot && !(String(f) in measured));
+    if (firstUnmeasured !== -1) return { ear, stepIndex: firstUnmeasured, extraFreqs };
+    // Every non-retest core and inter-octave frequency for this ear is
+    // measured; the only slot that can still be ambiguous is the retest
+    // itself, and the limitation above means that ambiguity is resolved the
+    // same way for either ear — redo it, never skip it — rather than
+    // guessing this ear is actually finished and jumping to the next one.
+    // Once that redone retest is recorded, `finishFrequency`'s own,
+    // unmodified ear-switch logic takes over exactly as it always has.
+    return { ear, stepIndex: retestSlot, extraFreqs };
+  }
+  // Unreachable — the loop above always returns on its first iteration, but
+  // TypeScript cannot see that from a `for...of` over a fixed tuple.
+  return { ear: "right", stepIndex: 0, extraFreqs };
 }
 
 /**
@@ -121,6 +183,22 @@ function estimateStartLevel(
 
 type Phase = "idle" | "presenting" | "gap" | "done";
 
+/**
+ * The continuous-session layer wrapping the per-frequency `phase` above.
+ *
+ *  - `intro` — the start screen; nothing has played yet.
+ *  - `active` — the test is running; frequencies auto-advance without a
+ *    per-frequency Start press (see the tracker-rebuild effect below).
+ *  - `paused` — the patient asked to pause; all audio and timers are
+ *    stopped, exactly as they were before `phase` doubled as this state.
+ *  - `confirmExit` — the Stop confirmation; testing is paused underneath it.
+ *  - `complete` — every required measurement and reliability check is done;
+ *    mirrors the old `phase === "done"`, kept as a distinct session phase so
+ *    "done with this frequency" and "done with the whole session" are never
+ *    the same value again.
+ */
+type SessionPhase = "intro" | "active" | "paused" | "confirmExit" | "complete";
+
 export interface AudiometryResult {
   audiogram: Record<Ear, Record<string, number>>;
   results: TrackerResult[];
@@ -135,6 +213,8 @@ export interface AudiometryResult {
 export default function Audiometry({
   onComplete,
   onSkip,
+  onProgress,
+  onExit,
   initialAudiogram,
 }: {
   onComplete(result: AudiometryResult): void;
@@ -147,11 +227,33 @@ export default function Audiometry({
    * assessment that skipped the test must not read as one that passed it.
    */
   onSkip?(): void;
+  /**
+   * Fires after every threshold actually established, with the audiogram as
+   * it stands — a background autosave so a page reload or a later "Exit
+   * Test" resumes with nothing lost, distinct from `onComplete` in that it
+   * never implies the session is finished (the caller must not add
+   * `"audiometry"` to `modules_done` for this). Optional: a caller that does
+   * not wire it up simply gets no mid-session persistence, exactly the
+   * previous behaviour.
+   */
+  onProgress?(audiogram: Record<Ear, Record<string, number>>): void;
+  /**
+   * The patient chose "Exit Test" after starting — as opposed to `onSkip`,
+   * which is never taking the test at all, this preserves whatever was
+   * already measured (the same audiogram `onProgress` has been saving) but,
+   * like `onSkip`, must not be recorded as a completed module.
+   */
+  onExit?(audiogram: Record<Ear, Record<string, number>>): void;
   initialAudiogram?: Record<string, Record<string, number>>;
 }) {
   const { t } = useTranslation();
-  const [ear, setEar] = useState<Ear>("right");
-  const [stepIndex, setStepIndex] = useState(0);
+  const resumed = useRef(
+    initialAudiogram && (Object.keys(initialAudiogram.left ?? {}).length || Object.keys(initialAudiogram.right ?? {}).length)
+      ? resumePosition({ left: initialAudiogram.left ?? {}, right: initialAudiogram.right ?? {} })
+      : null
+  ).current;
+  const [ear, setEar] = useState<Ear>(resumed?.ear ?? "right");
+  const [stepIndex, setStepIndex] = useState(resumed?.stepIndex ?? 0);
   /**
    * Guided or manual.
    *
@@ -171,6 +273,12 @@ export default function Audiometry({
    */
   const [mode, setMode] = useState<"guided" | "manual">("guided");
   const [phase, setPhase] = useState<Phase>("idle");
+  // The continuous-session layer. A resumed session (existing thresholds on
+  // file) opens straight onto the intro screen like any other — resuming
+  // still gets a deliberate "Start" press before any audio plays, rather
+  // than auto-presenting into a session the patient has not chosen to
+  // continue yet in *this* visit.
+  const [sessionPhase, setSessionPhase] = useState<SessionPhase>("intro");
   const [audiogram, setAudiogram] = useState<Record<Ear, Record<string, number>>>(() => ({
     left: { ...(initialAudiogram?.left ?? {}) },
     right: { ...(initialAudiogram?.right ?? {}) },
@@ -183,8 +291,13 @@ export default function Audiometry({
   const [presentations, setPresentations] = useState(0);
   const [retest, setRetest] = useState<{ first: number | null; second: number | null }>({ first: null, second: null });
 
-  // Extra frequencies added mid-test when the 20 dB inter-octave rule fires.
-  const [extraFreqs, setExtraFreqs] = useState<Record<Ear, number[]>>({ left: [], right: [] });
+  // Extra frequencies added mid-test when the 20 dB inter-octave rule fires
+  // — seeded from the resumed audiogram's own thresholds when reopening a
+  // session that already has some, so a resumed session that already
+  // qualifies for 3/6 kHz does not lose that requirement.
+  const [extraFreqs, setExtraFreqs] = useState<Record<Ear, number[]>>(
+    () => resumed?.extraFreqs ?? { left: [], right: [] }
+  );
 
   const tracker = useRef<ThresholdTracker | null>(null);
   const timers = useRef<number[]>([]);
@@ -272,6 +385,7 @@ export default function Audiometry({
       setStepIndex(0);
     } else {
       setPhase("done");
+      setSessionPhase("complete");
     }
   }, [audiogram, ear, extraFreqs, freq, stepIndex]);
 
@@ -319,6 +433,33 @@ export default function Audiometry({
     timers.current.push(windowTimer);
   }, [ear, freq, finishFrequency, presentations]);
 
+  /**
+   * Mid-session persistence: fires whenever the audiogram actually changes —
+   * a new threshold from `finishFrequency`, a redo from `previousFrequency`,
+   * or a manual-mode record/clear — with the audiogram exactly as committed.
+   * Deliberately a plain effect watching the committed state rather than a
+   * call from inside `finishFrequency`'s `setAudiogram` updater: an updater
+   * must stay pure (React's Strict Mode, which this app renders under, can
+   * invoke it twice), so the side effect belongs here instead. Skipped
+   * before the patient has pressed Start, when `audiogram` is only the
+   * initial value echoed back and there is nothing new to save.
+   */
+  useEffect(() => {
+    if (sessionPhase === "intro") return;
+    onProgress?.(audiogram);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audiogram]);
+
+  /** Auto-advance: once the tracker-rebuild effect above has reset `phase` to
+   *  `idle` for a new frequency, start presenting immediately — the whole
+   *  point of a continuous session. Does nothing while paused, exiting, or
+   *  on the intro screen; `present()` guards `tracker.current` itself, so
+   *  this is safe to fire on every phase/session-phase change. */
+  useEffect(() => {
+    if (sessionPhase === "active" && phase === "idle") void present();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionPhase, phase]);
+
   const respond = useCallback(() => {
     if (phase !== "presenting" || respondedRef.current) return;
     respondedRef.current = true;
@@ -328,15 +469,54 @@ export default function Audiometry({
   useHotkey(" ", respond, "I heard it", phase === "presenting");
   useHotkey("enter", respond, "I heard it", phase === "presenting");
 
+  /** The intro screen's single "Start Hearing Test" press — the only manual
+   *  Start in the whole session from here on; every later frequency
+   *  auto-presents via the effect above once `sessionPhase` is `active`. */
   function start() {
     clearTimers();
+    setSessionPhase("active");
     void present();
   }
 
-  function stop() {
+  /** Pause: stop all audio and timers immediately, exactly as the original
+   *  per-frequency "Pause" always has, and show the paused screen rather
+   *  than silently returning to what used to be indistinguishable from it —
+   *  the old per-frequency "waiting for Start" idle state this replaces. */
+  function pause() {
     clearTimers();
     engine.stopAll(0.05);
     setPhase("idle");
+    setSessionPhase("paused");
+  }
+
+  /** Resume: the tracker for the current frequency was never torn down —
+   *  only its presentation timers were cleared — so this continues the same
+   *  bracket search rather than restarting the frequency. The auto-advance
+   *  effect calls `present()` once `sessionPhase` flips back to `active`. */
+  function resumeSession() {
+    setSessionPhase("active");
+  }
+
+  /** The Stop control during active testing — pauses underneath the "Stop
+   *  Hearing Test?" confirmation rather than leaving audio running behind it. */
+  function openExitConfirm() {
+    clearTimers();
+    engine.stopAll(0.05);
+    setPhase("idle");
+    setSessionPhase("confirmExit");
+  }
+
+  function continueTesting() {
+    setSessionPhase("active");
+  }
+
+  /** "Exit Test": preserves whatever has already been measured (the same
+   *  audiogram `onProgress` has been saving throughout) but, like `onSkip`,
+   *  must not read as a completed module — see `onExit`'s own doc comment. */
+  function exitTest() {
+    clearTimers();
+    engine.stopAll(0.05);
+    onExit?.(audiogram);
   }
 
   function skipFrequency() {
@@ -474,36 +654,42 @@ export default function Audiometry({
   return (
     <div className="stack stack-5">
       {/* Guided is the default and the clinical procedure; manual is the
-          audiometer. One or the other, never both driving the audio at once. */}
-      <div className="row row--between row--wrap">
-        <div className="btn-group">
-          <button
-            type="button"
-            className="btn btn--sm"
-            aria-pressed={mode === "guided"}
-            onClick={() => {
-              clearTimers();
-              engine.stopAll(0.05);
-              setMode("guided");
-            }}
-          >
-            {t("audiometry.modeGuided")}
-          </button>
-          <button
-            type="button"
-            className="btn btn--sm"
-            aria-pressed={mode === "manual"}
-            onClick={() => {
-              clearTimers();
-              engine.stopAll(0.05);
-              setMode("manual");
-            }}
-          >
-            {t("audiometry.modeManual")}
-          </button>
+          audiometer. One or the other, never both driving the audio at once.
+          Hidden mid-session (guided, actively testing) so the continuous
+          screen stays free of chrome the patient never needs — still
+          reachable before starting and once the session pauses, stops or
+          completes. */}
+      {(mode === "manual" || sessionPhase === "intro" || sessionPhase === "paused" || sessionPhase === "complete") && (
+        <div className="row row--between row--wrap">
+          <div className="btn-group">
+            <button
+              type="button"
+              className="btn btn--sm"
+              aria-pressed={mode === "guided"}
+              onClick={() => {
+                clearTimers();
+                engine.stopAll(0.05);
+                setMode("guided");
+              }}
+            >
+              {t("audiometry.modeGuided")}
+            </button>
+            <button
+              type="button"
+              className="btn btn--sm"
+              aria-pressed={mode === "manual"}
+              onClick={() => {
+                clearTimers();
+                engine.stopAll(0.05);
+                setMode("manual");
+              }}
+            >
+              {t("audiometry.modeManual")}
+            </button>
+          </div>
+          <Chip tone="ghost">{t("audiometry.stimulusPureTone")}</Chip>
         </div>
-        <Chip tone="ghost">{t("audiometry.stimulusPureTone")}</Chip>
-      </div>
+      )}
 
       {mode === "manual" ? (
         <ManualThreshold
@@ -525,6 +711,12 @@ export default function Audiometry({
           }
           onDone={complete}
         />
+      ) : sessionPhase === "intro" ? (
+        <IntroScreen resuming={!!resumed} onStart={start} onSkip={onSkip} />
+      ) : sessionPhase === "paused" ? (
+        <PausedScreen onResume={resumeSession} onExitConfirm={openExitConfirm} />
+      ) : sessionPhase === "confirmExit" ? (
+        <ConfirmExitScreen onContinue={continueTesting} onExit={exitTest} />
       ) : (
       <div className="grid grid-sidebar" style={{ ["--aside" as string]: "300px" }}>
         {/* -- test panel ----------------------------------------------------- */}
@@ -534,12 +726,14 @@ export default function Audiometry({
               <Chip tone={ear === "right" ? "crit" : "info"} dot>
                 {t(ear === "left" ? "audiometry.leftEar" : "audiometry.rightEar")}
               </Chip>
-              <Chip tone="ghost">
-                {isRetestStep
-                  ? t("audiometry.retestChip")
-                  : t("audiometry.stepOf", { current: doneSteps + 1, total: totalSteps })}
-              </Chip>
-              {isInterOctave && (
+              {sessionPhase === "active" && (
+                <Chip tone="ghost">
+                  {isRetestStep
+                    ? t("audiometry.retestChip")
+                    : t("audiometry.stepOf", { current: doneSteps + 1, total: totalSteps })}
+                </Chip>
+              )}
+              {sessionPhase === "active" && isInterOctave && (
                 <Chip tone="warn" title={t("audiometry.interOctaveTitle", { gap: INTER_OCTAVE_GAP_DB })}>
                   {t("audiometry.extraFrequency")}
                 </Chip>
@@ -555,16 +749,6 @@ export default function Audiometry({
             </div>
             <div className="row row--tight row--nowrap">
               <span className="mono meta">{progress}%</span>
-              {onSkip && (
-                <button
-                  type="button"
-                  className="btn btn--sm btn--ghost"
-                  onClick={onSkip}
-                  title={t("audiometry.skipModuleHint")}
-                >
-                  {t("audiometry.skipModule")}
-                </button>
-              )}
             </div>
           </div>
 
@@ -590,16 +774,16 @@ export default function Audiometry({
               />
             </div>
 
+            {/* The only moment nothing is playing during an active session:
+                the brief gap while the tracker rebuilds for the next
+                frequency, before the auto-advance effect calls `present()`.
+                No button here any more — that effect is the trigger now,
+                not a patient click, which is the whole point of "continuous". */}
             {phase === "idle" && (
-              <div className="stack stack-3" style={{ maxWidth: "32em", marginInline: "auto" }}>
-                <p style={{ fontSize: "var(--fs-small)" }}>
-                  <Trans i18nKey="audiometry.instruction" components={[<strong key="0" />]} />
-                </p>
-                <button type="button" className="btn btn--primary btn--lg" onClick={start}>
-                  {t(ear === "left" ? "audiometry.startLeft" : "audiometry.startRight", {
-                    freq: freq >= 1000 ? `${freq / 1000} kHz` : `${freq} Hz`,
-                  })}
-                </button>
+              <div className="stack stack-2" style={{ minHeight: 78 }}>
+                <span className="meta" aria-live="polite">
+                  {t("audiometry.nextFrequency", { defaultValue: "Preparing next measurement…" })}
+                </span>
               </div>
             )}
 
@@ -634,20 +818,23 @@ export default function Audiometry({
                   >
                     ← {t("audiometry.previous")}
                   </button>
-                  <button type="button" className="btn btn--sm btn--ghost" onClick={stop}>
+                  <button type="button" className="btn btn--sm btn--ghost" onClick={pause}>
                     {t("audiometry.pause")}
                   </button>
                   <button type="button" className="btn btn--sm btn--ghost" onClick={skipFrequency}>
                     {t("audiometry.skipFrequency")}
                   </button>
+                  <button type="button" className="btn btn--sm btn--ghost" onClick={openExitConfirm}>
+                    {t("audiometry.stopTest", { defaultValue: "Stop" })}
+                  </button>
                 </div>
               </div>
             )}
 
-            {phase === "done" && (
+            {sessionPhase === "complete" && phase === "done" && (
               <div className="stack stack-3">
                 <Chip tone={measuredCount > 0 ? "ok" : "crit"} dot>
-                  {t("audiometry.bothComplete")}
+                  {t("audiometry.sessionCompleteTitle", { defaultValue: "Hearing measurement complete" })}
                 </Chip>
 
                 {/* What was actually captured, in the one place where it can
@@ -677,6 +864,7 @@ export default function Audiometry({
                           setResults([]);
                           setRetest({ first: null, second: null });
                           setPhase("idle");
+                          setSessionPhase("active");
                         }}
                       >
                         {t("audiometry.restart")}
@@ -685,7 +873,7 @@ export default function Audiometry({
                   </Panel>
                 ) : (
                   <button type="button" className="btn btn--primary btn--lg" onClick={complete}>
-                    {t("audiometry.saveAndContinue")}
+                    {t("audiometry.viewAudiogram", { defaultValue: "View audiogram" })}
                   </button>
                 )}
               </div>
@@ -716,6 +904,10 @@ export default function Audiometry({
 
         {/* -- live audiogram + reliability ----------------------------------- */}
         <div className="stack stack-4">
+          <Panel title={t("audiometry.progress", { defaultValue: "Progress" })} tight headPlain>
+            <FrequencyProgressGrid audiogram={audiogram} extraFreqs={extraFreqs} t={t} />
+          </Panel>
+
           <Panel title={t("audiometry.liveAudiogram")} tight headPlain>
             <Audiogram audiogram={audiogram} height={280} showLegend />
           </Panel>
@@ -777,6 +969,175 @@ export default function Audiometry({
         </div>
       </div>
       )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------------- */
+/* Continuous-session screens                                                */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * The one manual "Start" left in the whole guided flow. Everything the
+ * duration estimate below says is derived directly from the existing timing
+ * already in `present()` — the 1.9 s response window plus `nextDelayMs()`'s
+ * 0.9–2.3 s gap, times the ~6–12 presentations a frequency typically takes
+ * (see `shouldInsertCatchTrial`'s own doc comment), times up to 16
+ * frequency/ear searches — not a clinical claim, just arithmetic on numbers
+ * already in this file.
+ */
+function IntroScreen({
+  resuming,
+  onStart,
+  onSkip,
+}: {
+  resuming: boolean;
+  onStart(): void;
+  onSkip?(): void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Panel bracketed>
+      <div className="center stack stack-5" style={{ paddingBlock: "var(--s6)" }}>
+        <div className="stack stack-3" style={{ maxWidth: "34em", marginInline: "auto", textAlign: "center" }}>
+          <h2 style={{ margin: 0 }}>{t("audiometry.introTitle", { defaultValue: "Hearing measurement" })}</h2>
+          <p style={{ fontSize: "var(--fs-body)" }}>
+            {resuming
+              ? t("audiometry.introResuming", {
+                  defaultValue:
+                    "You already have some measurements on file for this test. It will pick up from where you left off rather than starting over.",
+                })
+              : t("audiometry.introLead", { defaultValue: "You'll hear a series of soft tones." })}
+          </p>
+          <p style={{ fontSize: "var(--fs-body)" }}>
+            {t("audiometry.introInstruction", {
+              defaultValue: 'Press "I heard it" whenever you hear a tone.',
+            })}
+          </p>
+          <p className="meta">
+            {t("audiometry.introAuto", {
+              defaultValue:
+                "The test will automatically adjust the sound level to estimate the softest sound you can hear. You do not need to adjust the volume yourself.",
+            })}
+          </p>
+          <p className="meta">
+            {t("audiometry.introDuration", { defaultValue: "Estimated duration: about 5–10 minutes." })}
+          </p>
+        </div>
+        <button type="button" className="btn btn--primary btn--lg" onClick={onStart}>
+          {t("audiometry.introStart", { defaultValue: "Start Hearing Test" })}
+        </button>
+        {onSkip && (
+          <button
+            type="button"
+            className="btn btn--sm btn--ghost"
+            onClick={onSkip}
+            title={t("audiometry.skipModuleHint")}
+          >
+            {t("audiometry.skipModule")}
+          </button>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function PausedScreen({ onResume, onExitConfirm }: { onResume(): void; onExitConfirm(): void }) {
+  const { t } = useTranslation();
+  return (
+    <Panel bracketed tone="warn">
+      <div className="center stack stack-4" style={{ paddingBlock: "var(--s6)" }}>
+        <h2 style={{ margin: 0 }}>{t("audiometry.pausedTitle", { defaultValue: "Hearing test paused" })}</h2>
+        <p className="meta">
+          {t("audiometry.pausedBody", { defaultValue: "Your progress has been saved temporarily." })}
+        </p>
+        <div className="row row--tight" style={{ justifyContent: "center" }}>
+          <button type="button" className="btn btn--primary btn--lg" onClick={onResume}>
+            {t("audiometry.resumeTest", { defaultValue: "Resume Test" })}
+          </button>
+          <button type="button" className="btn btn--sm btn--ghost" onClick={onExitConfirm}>
+            {t("audiometry.stopTest", { defaultValue: "Stop" })}
+          </button>
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+/** The safe-exit confirmation — rule 21. Testing is already paused (audio
+ *  and timers stopped) by `openExitConfirm` before this ever renders. */
+function ConfirmExitScreen({ onContinue, onExit }: { onContinue(): void; onExit(): void }) {
+  const { t } = useTranslation();
+  return (
+    <Panel bracketed tone="crit">
+      <div className="center stack stack-4" style={{ paddingBlock: "var(--s6)" }}>
+        <h2 style={{ margin: 0 }}>{t("audiometry.confirmExitTitle", { defaultValue: "Stop hearing test?" })}</h2>
+        <p className="meta" style={{ maxWidth: "34em" }}>
+          {t("audiometry.confirmExitBody", {
+            defaultValue:
+              "Your current measurements will be preserved, but the audiogram will not be marked complete until the required measurements are finished.",
+          })}
+        </p>
+        <div className="row row--tight" style={{ justifyContent: "center" }}>
+          <button type="button" className="btn btn--primary" onClick={onContinue}>
+            {t("audiometry.continueTesting", { defaultValue: "Continue Testing" })}
+          </button>
+          <button type="button" className="btn btn--ghost" onClick={onExit}>
+            {t("audiometry.exitTest", { defaultValue: "Exit Test" })}
+          </button>
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+/** Meaningful progress (rule 8) — one row per threshold actually being
+ *  sought, not one per stimulus presentation. `extraFreqs` deliberately only
+ *  ever contains 3 kHz / 6 kHz once the inter-octave rule has decided they
+ *  are needed for that ear, so an ear that never triggers them never shows a
+ *  pending row for a measurement that may not happen. */
+const CORE_UNIQUE_FREQS = Array.from(new Set(CORE_SEQUENCE)).sort((a, b) => a - b);
+
+function FrequencyProgressGrid({
+  audiogram,
+  extraFreqs,
+  t,
+}: {
+  audiogram: Record<Ear, Record<string, number>>;
+  extraFreqs: Record<Ear, number[]>;
+  t: (key: string, opts?: Record<string, unknown>) => string;
+}) {
+  function column(ear: Ear) {
+    const freqs = [...CORE_UNIQUE_FREQS, ...extraFreqs[ear]].sort((a, b) => a - b);
+    return (
+      <div className="stack stack-1">
+        <span className="label center">{t(ear === "left" ? "audiometry.leftEar" : "audiometry.rightEar")}</span>
+        {freqs.map((f) => {
+          const measured = String(f) in (audiogram[ear] ?? {});
+          const label = f >= 1000 ? `${f / 1000} kHz` : `${f} Hz`;
+          const statusLabel = t(
+            measured ? "audiometry.measuredStatus" : "audiometry.remainingStatus",
+            { defaultValue: measured ? "measured" : "remaining" }
+          );
+          return (
+            <div
+              key={f}
+              className="row row--between"
+              style={{ fontSize: "var(--fs-small)" }}
+              aria-label={`${label} ${statusLabel}`}
+            >
+              <span className="mono">{f >= 1000 ? `${f / 1000}k` : f}</span>
+              <span aria-hidden="true">{measured ? "●" : "○"}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+  return (
+    <div className="grid grid-2" style={{ gap: "var(--s4)" }}>
+      {column("right")}
+      {column("left")}
     </div>
   );
 }

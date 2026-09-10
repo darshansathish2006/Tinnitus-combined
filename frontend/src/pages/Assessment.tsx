@@ -392,8 +392,51 @@ export default function Assessment() {
    * The consequences are real — no audiogram, no hearing grade, and no 3D
    * cochlea, all of which are built from these thresholds — which is why this is
    * a deliberate exit rather than a way past a step.
+   *
+   * Distinct from `saveAudiometryProgress`/`exitAudiometryPartial` below: this
+   * is for a patient who never started the test at all, those are for one who
+   * did and is pausing or stopping partway through.
    */
   function skipAudiometry() {
+    setHearingPhase("measurement");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  /**
+   * Continuous Adaptive Audiometry's mid-session autosave — fired after every
+   * threshold actually established, so a page reload or a later Exit resumes
+   * with nothing lost. `modules_done` deliberately stays empty: an in-progress
+   * audiogram must never read as a completed hearing test, exactly the same
+   * rule `skipAudiometry` already enforces for "never started" — this is its
+   * "started, not finished yet" counterpart. Runs in the background: a patient
+   * mid-tone does not wait on this, and `saveModule` already reports its own
+   * failures via `saveModule2Section`'s sibling pattern elsewhere in this file,
+   * so nothing here needs to interrupt testing over a dropped autosave.
+   */
+  function saveAudiometryProgress(audiogram: AudiometryResult["audiogram"]) {
+    saveModule({ audiogram }, []).catch(() => {
+      // A failed background autosave does not stop the test; the next
+      // successful one (or the final `submitAudiometry`) carries the same
+      // cumulative audiogram forward.
+    });
+  }
+
+  /**
+   * "Exit Test" — the patient stops partway through, per the Stop
+   * confirmation. Preserves whatever was measured (the same audiogram
+   * `saveAudiometryProgress` has been saving throughout) but, like
+   * `skipAudiometry`, never marks the module done — an exited test is not a
+   * completed one, however much of it was finished.
+   */
+  async function exitAudiometryPartial(audiogram: AudiometryResult["audiogram"]) {
+    setSaving(true);
+    try {
+      await saveModule({ audiogram }, []);
+    } catch (error) {
+      toast(error instanceof ApiError ? error.message : t("assessment.toast.audiometryFailed"), "crit");
+    } finally {
+      setSaving(false);
+    }
     setHearingPhase("measurement");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -888,6 +931,8 @@ export default function Assessment() {
             <Audiometry
               onComplete={submitAudiometry}
               onSkip={skipAudiometry}
+              onProgress={saveAudiometryProgress}
+              onExit={exitAudiometryPartial}
               initialAudiogram={assessment?.audiogram}
             />
           ) : hearingPhase === "measurement" ? (
