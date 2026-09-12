@@ -770,7 +770,8 @@ def apply_submission(assessment: Assessment, data: dict[str, Any]) -> None:
     # Questionnaire item banks merge, so a patient can answer across sittings and
     # so a GAD-7 escalation adds to the GAD-2 items already stored.
     for field in (
-        "thi_items", "tfi_items", "isi_items", "phq9_items", "psqi_items", "pss10_items", "gad7_items", "phq2_items"
+        "thi_items", "tfi_items", "isi_items", "phq9_items", "psqi_items", "pss10_items", "gad7_items", "phq2_items",
+        "whoqol_bref_items",
     ):
         if field in data:
             setattr(assessment, field, {**(getattr(assessment, field) or {}), **data[field]})
@@ -963,19 +964,22 @@ def assessment_detail(request, assessment_id: int):
 # "About Your Tinnitus" module — the 8 result categories the Results page must
 # report on, and why each one is or is not available.
 #
-# Seven instruments (VAS, THI, TFI, ISI, GAD-7, PHQ-9, PSS-10) are fully
-# implemented and scored by `score_all`. The remaining one (EQ-5D-5L) has no
-# validated item content anywhere in this codebase — per an explicit product
-# decision, it is shown as honestly unavailable rather than approximated,
-# invented, or silently dropped. This list is the single source of truth both
-# `report_clinical` and the frontend Results page key off, so the two can
-# never describe a category differently.
+# All eight instruments (VAS, THI, TFI, ISI, GAD-7, PHQ-9, PSS-10, WHOQOL-BREF)
+# are now implemented and scored by `score_all`. WHOQOL-BREF is "real" like
+# the rest — its 26 items are administered and stored in full — but
+# `score_whoqol_bref()` deliberately reports completion only, never a domain
+# or overall score (see `clinical/instruments.py`): the published scoring
+# manual's raw-to-transformed conversion tables were not part of the source
+# supplied for this feature, and inventing one would fabricate a
+# clinical-looking number nobody validated. This list is the single source of
+# truth both `report_clinical` and the frontend Results page key off, so the
+# two can never describe a category differently.
 #: The only fields a PATCH may touch once an assessment is finalised — see the
 #: guard in `assessment_detail`. Everything else stays locked after finalise.
 POST_COMPLETE_EDITABLE_FIELDS = frozenset(
     {
         "thi_items", "tfi_items", "isi_items", "phq9_items", "phq9_functional_difficulty",
-        "vas", "vas_pain", "gad7_items", "pss10_items", "questionnaire_status",
+        "vas", "vas_pain", "gad7_items", "pss10_items", "questionnaire_status", "whoqol_bref_items",
     }
 )
 
@@ -992,14 +996,7 @@ MODULE2_DOMAINS: list[dict[str, Any]] = [
     {"key": "gad7", "category": "Anxiety", "instrument": "GAD-7", "kind": "real", "required": False},
     {"key": "phq9", "category": "Mood / Depression", "instrument": "PHQ-9", "kind": "real", "required": False},
     {"key": "pss10", "category": "Perceived Stress", "instrument": "PSS-10", "kind": "real", "required": False},
-    # WHOQOL-BREF has no validated item content anywhere in this codebase —
-    # confirmed by a repo-wide search (no "whoqol" hits at all). This was
-    # "eq5d5l" (EQ-5D-5L), itself never more than the same honest stub: no
-    # EQ-5D-5L item bank, scoring, or model field exists either, so this is a
-    # rename of an empty placeholder's label, not a relabelling of real
-    # EQ-5D-5L content or data — there is no EQ-5D-5L data anywhere to lose or
-    # mislabel. Still `kind: "stub"`: nothing here is fabricated.
-    {"key": "whoqol_bref", "category": "Quality of Life", "instrument": "WHOQOL-BREF", "kind": "stub", "required": False},
+    {"key": "whoqol_bref", "category": "Quality of Life", "instrument": "WHOQOL-BREF", "kind": "real", "required": False},
 ]
 
 
@@ -1031,6 +1028,14 @@ def module2_status(assessment: Assessment, scores: dict[str, Any]) -> list[dict[
             vas = scores.get("vas") or {}
             has_value = any(v is not None for v in vas.values())
             score, grade = None, None
+        elif key == "whoqol_bref":
+            # No domain/overall score is ever computed for WHOQOL-BREF (see
+            # `score_whoqol_bref`), so availability here means "all 26 items
+            # answered", not "a score exists" — the only honest reading of
+            # "complete" for an instrument with no validated scoring formula.
+            entry = scores.get(key) or {}
+            score, grade = None, None
+            has_value = bool(entry.get("complete"))
         else:
             entry = scores.get(key) or {}
             score, grade = entry.get("score"), entry.get("grade")

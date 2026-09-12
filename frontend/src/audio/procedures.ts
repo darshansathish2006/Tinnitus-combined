@@ -888,6 +888,52 @@ export class MaskingLevelFinder {
   }
 }
 
+/** One masking-curve chart point, per frequency in the tested sequence. */
+export interface MaskingCurvePoint {
+  hz: number;
+  threshold_db: number | null;
+  masked: boolean | null;
+  tested: boolean;
+  /** The masker level actually presented on the *last* trial recorded for
+   *  this frequency — see `buildMaskingCurvePoints` below. `null` when the
+   *  frequency has no trial history yet (never fabricated). */
+  masker_db: number | null;
+}
+
+/**
+ * Builds the masking-curve chart's per-frequency points from the adaptive
+ * search's own results — the graph's only data source, so it can never show
+ * a frequency that was not tested or a value nobody measured.
+ *
+ * `threshold_db` is `result()`'s bracketed MML, unchanged. `masker_db` is a
+ * *different* real number: the level of the last trial actually presented at
+ * that frequency (see `MaskingTrial.level_db`). For a search that ended in
+ * the ordinary way — the fine phase's confirming "audible" response — that
+ * last-presented level sits one fine step *below* the MML, the overshoot
+ * that is not what masked the tinnitus. For a frequency that reached the
+ * safety ceiling without ever masking, it is the ceiling level itself: a
+ * masker genuinely was presented there even though no threshold was ever
+ * obtained (`threshold_db` stays `null`). Neither value is ever copied into
+ * the other, and a frequency with no trials yet gets `null` for both rather
+ * than a guess.
+ */
+export function buildMaskingCurvePoints(
+  frequencies: number[],
+  results: { frequency_hz: number; trials: MaskingTrial[]; mml_db: number | null }[]
+): MaskingCurvePoint[] {
+  return frequencies.map((hz) => {
+    const found = results.find((r) => r.frequency_hz === hz);
+    const lastTrial = found?.trials[found.trials.length - 1];
+    return {
+      hz,
+      threshold_db: found?.mml_db ?? null,
+      masked: found ? found.mml_db !== null : null,
+      tested: Boolean(found),
+      masker_db: lastTrial ? lastTrial.level_db : null,
+    };
+  });
+}
+
 /* ------------------------------------------------------------------------- */
 /* Residual inhibition                                                        */
 /* ------------------------------------------------------------------------- */

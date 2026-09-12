@@ -118,6 +118,10 @@ def assessment_dict(assessment: Any) -> dict[str, Any]:
         # two items, exactly as `gad2_items` merges into `gad7_items`.
         "phq9_items": assessment.phq9_items or {},
         "phq9_functional_difficulty": assessment.phq9_functional_difficulty,
+        # WHOQOL-BREF — 26 raw per-item answers. `score_whoqol_bref()` reports
+        # completion only (no domain/overall score — see the model field and
+        # `clinical/instruments.py` for why).
+        "whoqol_bref_items": assessment.whoqol_bref_items or {},
         "vas_loudness": assessment.vas_loudness,
         "vas_annoyance": assessment.vas_annoyance,
         "vas_awareness": assessment.vas_awareness,

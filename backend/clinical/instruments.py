@@ -1544,6 +1544,217 @@ def score_phq9(raw: Mapping[str, Any] | None) -> ScoreResult:
 
 
 # --------------------------------------------------------------------------- #
+# WHOQOL-BREF - World Health Organization Quality of Life, abbreviated form
+# --------------------------------------------------------------------------- #
+# The WHOQOL Group. Development of the World Health Organization WHOQOL-BREF
+# quality of life assessment. Psychol Med. 1998;28(3):551-8. Item text, item
+# numbering, the published item codes (G1, G4, F1.4, ...), response-scale
+# wording, response order and the 1-5 numeric values below are reproduced
+# verbatim from the published WHOQOL-BREF patient form (Appendix 8) supplied
+# as the source for this implementation - nothing here is paraphrased,
+# reordered or invented.
+#
+# Six response scales are used across the 26 items, not one generic scale:
+#   * "poor_good"          - Q1, Q15 (Very poor .. Very good)
+#   * "satisfaction"       - Q2, Q16-Q25 (Very dissatisfied .. Very satisfied)
+#   * "amount"              - Q3-Q6 (Not at all .. An extreme amount)
+#   * "amount_extremely"   - Q7-Q9 (Not at all .. Extremely - the published
+#                             form's own inconsistency: the same "how much"
+#                             framing sentence covers Q3-Q9, but the top label
+#                             of the scale changes from "An extreme amount" to
+#                             "Extremely" for Q7-Q9; both are reproduced
+#                             exactly as printed, not harmonised)
+#   * "capacity"            - Q10-Q14 (Not at all .. Completely)
+#   * "frequency"           - Q26 (Never .. Always)
+# Every scale is 1-5, ascending in the order printed. `option_sets` maps each
+# item's `kind` to its scale, the same mechanism PSQI/ISI/TFI already use for
+# an instrument with more than one response type.
+#
+# `code` carries the published item code (G1, F1.4, ...) so the digital
+# implementation stays traceable against the source form; `n` is the
+# question's printed position (1-26). Neither is a scored field - `id` (used
+# for storage, translation lookup and scoring) follows this codebase's own
+# `<instrument><n>` convention, matching thi1/gad1/isi1a/phq1 rather than the
+# source's own "Q1"/"G1" labelling.
+#
+# **Scoring is deliberately not implemented.** The supplied source is the
+# patient form only; it does not include the published WHOQOL-BREF scoring
+# manual's raw-to-transformed domain-score conversion tables (four domains:
+# physical health, psychological, social relationships, environment), and no
+# WHOQOL-BREF scoring of any kind previously existed anywhere in this
+# codebase (this module replaces what had been an empty "eq5d5l"/"whoqol_bref"
+# stub with no item bank at all). Inventing a transformation here would
+# fabricate a clinical-looking domain score nobody validated, so
+# `score_whoqol_bref()` reports only what was actually collected - which of
+# the 26 items have a valid response, and whether all 26 are present - and
+# `score`/`grade` stay `None` permanently until a validated scoring reference
+# is supplied and wired in.
+WHOQOL_REFERENCE_PERIOD = "the last two weeks"
+
+WHOQOL_INSTRUCTIONS = (
+    "This assessment asks how you feel about your quality of life, health, and other areas of "
+    "your life. Please answer all the questions. If you are unsure about which response to give "
+    "to a question, choose the one that appears most appropriate — this can often be your first "
+    "response. Please keep in mind your own standards, hopes, pleasures and concerns, and think "
+    "about your life over the last two weeks."
+)
+
+WHOQOL_POOR_GOOD_OPTIONS = [
+    {"label": "Very poor", "value": 1},
+    {"label": "Poor", "value": 2},
+    {"label": "Neither poor nor good", "value": 3},
+    {"label": "Good", "value": 4},
+    {"label": "Very good", "value": 5},
+]
+WHOQOL_SATISFACTION_OPTIONS = [
+    {"label": "Very dissatisfied", "value": 1},
+    {"label": "Dissatisfied", "value": 2},
+    {"label": "Neither satisfied nor dissatisfied", "value": 3},
+    {"label": "Satisfied", "value": 4},
+    {"label": "Very satisfied", "value": 5},
+]
+WHOQOL_AMOUNT_OPTIONS = [
+    {"label": "Not at all", "value": 1},
+    {"label": "A little", "value": 2},
+    {"label": "A moderate amount", "value": 3},
+    {"label": "Very much", "value": 4},
+    {"label": "An extreme amount", "value": 5},
+]
+WHOQOL_AMOUNT_EXTREMELY_OPTIONS = [
+    {"label": "Not at all", "value": 1},
+    {"label": "A little", "value": 2},
+    {"label": "A moderate amount", "value": 3},
+    {"label": "Very much", "value": 4},
+    {"label": "Extremely", "value": 5},
+]
+WHOQOL_CAPACITY_OPTIONS = [
+    {"label": "Not at all", "value": 1},
+    {"label": "A little", "value": 2},
+    {"label": "Moderately", "value": 3},
+    {"label": "Mostly", "value": 4},
+    {"label": "Completely", "value": 5},
+]
+WHOQOL_FREQUENCY_OPTIONS = [
+    {"label": "Never", "value": 1},
+    {"label": "Seldom", "value": 2},
+    {"label": "Quite often", "value": 3},
+    {"label": "Very often", "value": 4},
+    {"label": "Always", "value": 5},
+]
+
+_WHOQOL_AMOUNT_CONTEXT = "The following questions ask about how much you have experienced certain things in the last two weeks."
+_WHOQOL_CAPACITY_CONTEXT = "The following questions ask about how completely you experience or were able to do certain things in the last two weeks."
+_WHOQOL_SATISFACTION_CONTEXT = "The following questions ask you to say how good or satisfied you have felt about various aspects of your life over the last two weeks."
+_WHOQOL_FREQUENCY_CONTEXT = "The following question refers to how often you have felt or experienced certain things in the last two weeks."
+
+WHOQOL_BREF_ITEMS: list[dict[str, Any]] = [
+    {"id": "whoqol1", "n": 1, "code": "G1", "kind": "poor_good",
+     "text": "How would you rate your quality of life?"},
+    {"id": "whoqol2", "n": 2, "code": "G4", "kind": "satisfaction",
+     "text": "How satisfied are you with your health?"},
+    {"id": "whoqol3", "n": 3, "code": "F1.4", "kind": "amount", "context": _WHOQOL_AMOUNT_CONTEXT,
+     "text": "To what extent do you feel that (physical) pain prevents you from doing what you need to do?"},
+    {"id": "whoqol4", "n": 4, "code": "F11.3", "kind": "amount", "context": _WHOQOL_AMOUNT_CONTEXT,
+     "text": "How much do you need any medical treatment to function in your daily life?"},
+    {"id": "whoqol5", "n": 5, "code": "F4.1", "kind": "amount", "context": _WHOQOL_AMOUNT_CONTEXT,
+     "text": "How much do you enjoy life?"},
+    {"id": "whoqol6", "n": 6, "code": "F24.2", "kind": "amount", "context": _WHOQOL_AMOUNT_CONTEXT,
+     "text": "To what extent do you feel your life to be meaningful?"},
+    {"id": "whoqol7", "n": 7, "code": "F5.3", "kind": "amount_extremely", "context": _WHOQOL_AMOUNT_CONTEXT,
+     "text": "How well are you able to concentrate?"},
+    {"id": "whoqol8", "n": 8, "code": "F16.1", "kind": "amount_extremely", "context": _WHOQOL_AMOUNT_CONTEXT,
+     "text": "How safe do you feel in your daily life?"},
+    {"id": "whoqol9", "n": 9, "code": "F22.1", "kind": "amount_extremely", "context": _WHOQOL_AMOUNT_CONTEXT,
+     "text": "How healthy is your physical environment?"},
+    {"id": "whoqol10", "n": 10, "code": "F2.1", "kind": "capacity", "context": _WHOQOL_CAPACITY_CONTEXT,
+     "text": "Do you have enough energy for everyday life?"},
+    {"id": "whoqol11", "n": 11, "code": "F7.1", "kind": "capacity", "context": _WHOQOL_CAPACITY_CONTEXT,
+     "text": "Are you able to accept your bodily appearance?"},
+    {"id": "whoqol12", "n": 12, "code": "F18.1", "kind": "capacity", "context": _WHOQOL_CAPACITY_CONTEXT,
+     "text": "Have you enough money to meet your needs?"},
+    {"id": "whoqol13", "n": 13, "code": "F20.1", "kind": "capacity", "context": _WHOQOL_CAPACITY_CONTEXT,
+     "text": "How available to you is the information that you need in your day-to-day life?"},
+    {"id": "whoqol14", "n": 14, "code": "F21.1", "kind": "capacity", "context": _WHOQOL_CAPACITY_CONTEXT,
+     "text": "To what extent do you have the opportunity for leisure activities?"},
+    {"id": "whoqol15", "n": 15, "code": "F9.1", "kind": "poor_good",
+     "text": "How well are you able to get around?"},
+    {"id": "whoqol16", "n": 16, "code": "F3.3", "kind": "satisfaction", "context": _WHOQOL_SATISFACTION_CONTEXT,
+     "text": "How satisfied are you with your sleep?"},
+    {"id": "whoqol17", "n": 17, "code": "F10.3", "kind": "satisfaction", "context": _WHOQOL_SATISFACTION_CONTEXT,
+     "text": "How satisfied are you with your ability to perform your daily living activities?"},
+    {"id": "whoqol18", "n": 18, "code": "F12.4", "kind": "satisfaction", "context": _WHOQOL_SATISFACTION_CONTEXT,
+     "text": "How satisfied are you with your capacity for work?"},
+    {"id": "whoqol19", "n": 19, "code": "F6.3", "kind": "satisfaction", "context": _WHOQOL_SATISFACTION_CONTEXT,
+     "text": "How satisfied are you with yourself?"},
+    {"id": "whoqol20", "n": 20, "code": "F13.3", "kind": "satisfaction", "context": _WHOQOL_SATISFACTION_CONTEXT,
+     "text": "How satisfied are you with your personal relationships?"},
+    {"id": "whoqol21", "n": 21, "code": "F15.3", "kind": "satisfaction", "context": _WHOQOL_SATISFACTION_CONTEXT,
+     "text": "How satisfied are you with your sex life?"},
+    {"id": "whoqol22", "n": 22, "code": "F14.4", "kind": "satisfaction", "context": _WHOQOL_SATISFACTION_CONTEXT,
+     "text": "How satisfied are you with the support you get from your friends?"},
+    {"id": "whoqol23", "n": 23, "code": "F17.3", "kind": "satisfaction", "context": _WHOQOL_SATISFACTION_CONTEXT,
+     "text": "How satisfied are you with the conditions of your living place?"},
+    {"id": "whoqol24", "n": 24, "code": "F19.3", "kind": "satisfaction", "context": _WHOQOL_SATISFACTION_CONTEXT,
+     "text": "How satisfied are you with your access to health services?"},
+    {"id": "whoqol25", "n": 25, "code": "F23.3", "kind": "satisfaction", "context": _WHOQOL_SATISFACTION_CONTEXT,
+     "text": "How satisfied are you with your transport?"},
+    {"id": "whoqol26", "n": 26, "code": "F8.1", "kind": "frequency", "context": _WHOQOL_FREQUENCY_CONTEXT,
+     "text": "How often do you have negative feelings such as blue mood, despair, anxiety, depression?"},
+]
+
+WHOQOL_BREF_ITEM_IDS = [i["id"] for i in WHOQOL_BREF_ITEMS]
+WHOQOL_BREF_ITEM_CODES = {i["id"]: i["code"] for i in WHOQOL_BREF_ITEMS}
+#: 26 items, each answered 1-5 - the raw ceiling, not a domain score (see above).
+WHOQOL_BREF_RAW_MAX = len(WHOQOL_BREF_ITEMS) * 5
+
+
+def score_whoqol_bref(raw: Mapping[str, Any] | None) -> ScoreResult:
+    """WHOQOL-BREF — item-level completion only, no domain/overall score.
+
+    All 26 items are required before this reports "complete" - like the ISI
+    and PHQ-9 above, no partial-completion allowance is documented for this
+    instrument in the source supplied for this feature, so this does not
+    prorate. An out-of-range, non-integer, or missing answer is dropped
+    rather than coerced, so a bad value counts as "not answered" rather than
+    a guessed-at response.
+
+    `score` and `grade` are always `None`: see the module comment above for
+    why a domain-scoring formula is deliberately not invented here.
+    """
+    raw = raw or {}
+    valid: dict[str, int] = {}
+    for item_id in WHOQOL_BREF_ITEM_IDS:
+        v = raw.get(item_id)
+        if v is None or v == "":
+            continue
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= v <= 5 and v == int(v):
+            valid[item_id] = int(v)
+
+    return ScoreResult(
+        instrument="WHOQOL-BREF",
+        score=None,
+        max_score=WHOQOL_BREF_RAW_MAX,
+        grade=None,
+        interpretation=(
+            "WHOQOL-BREF domain scoring is not implemented in this system: the published "
+            "scoring manual's raw-to-transformed domain conversion tables were not part of "
+            "the source supplied for this feature, and no WHOQOL-BREF scoring previously "
+            "existed in this codebase. Responses are recorded in full and available for a "
+            "future scoring pass; no score is fabricated in the meantime."
+        ),
+        answered=len(valid),
+        expected=len(WHOQOL_BREF_ITEM_IDS),
+        subscales={"scoring_implemented": False, "item_codes": WHOQOL_BREF_ITEM_CODES},
+        prorated=False,
+        flags=[],
+    )
+
+
+# --------------------------------------------------------------------------- #
 # Registry consumed by the frontend so item banks live in exactly one place
 # --------------------------------------------------------------------------- #
 INSTRUMENT_REGISTRY: dict[str, dict[str, Any]] = {
@@ -1702,6 +1913,29 @@ INSTRUMENT_REGISTRY: dict[str, dict[str, Any]] = {
             "options": PHQ9_FUNCTIONAL_DIFFICULTY_OPTIONS,
         },
     },
+    "whoqol_bref": {
+        "name": "World Health Organization Quality of Life — BREF",
+        "abbrev": "WHOQOL-BREF",
+        "citation": "The WHOQOL Group. Psychol Med. 1998;28(3):551-8. Item text, item numbering, "
+        "item codes and response scales reproduced verbatim from the published WHOQOL-BREF "
+        "patient form (Appendix 8).",
+        "items": WHOQOL_BREF_ITEMS,
+        "option_sets": {
+            "poor_good": WHOQOL_POOR_GOOD_OPTIONS,
+            "satisfaction": WHOQOL_SATISFACTION_OPTIONS,
+            "amount": WHOQOL_AMOUNT_OPTIONS,
+            "amount_extremely": WHOQOL_AMOUNT_EXTREMELY_OPTIONS,
+            "capacity": WHOQOL_CAPACITY_OPTIONS,
+            "frequency": WHOQOL_FREQUENCY_OPTIONS,
+        },
+        "max_score": WHOQOL_BREF_RAW_MAX,
+        "reference_period": WHOQOL_REFERENCE_PERIOD,
+        "instructions": WHOQOL_INSTRUCTIONS,
+        # No domain/overall score is computed — see `score_whoqol_bref`. Carried
+        # on the registry so a client can show the honest "scoring not yet
+        # available" note without guessing at why a score is absent.
+        "scoring_implemented": False,
+    },
 }
 
 
@@ -1735,6 +1969,7 @@ def score_all(payload: Mapping[str, Any]) -> dict[str, Any]:
         "tfi": score_tfi(payload.get("tfi_items")).to_dict(),
         "isi": score_isi(payload.get("isi_items")).to_dict(),
         "phq9": score_phq9(payload.get("phq9_items")).to_dict(),
+        "whoqol_bref": score_whoqol_bref(payload.get("whoqol_bref_items")).to_dict(),
     }
     scores["escalations"] = escalation_plan(scores)
     return scores

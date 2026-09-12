@@ -167,6 +167,16 @@ export interface InstrumentSpec {
   /** The VAS entry's separate 0-10 pain faces scale — never one of `items`,
    *  never part of the four tinnitus scales' scoring. */
   pain_scale?: PainScaleSpec;
+  /** Shown on the guided form's pre-Question-1 instructions screen, when
+   *  present — see `AboutYourTinnitus.tsx::GuidedInstrumentSectionForm`.
+   *  Currently only WHOQOL-BREF carries this. */
+  instructions?: string;
+  /** e.g. "the last two weeks" — the recall window the instrument's
+   *  instructions ask the patient to consider. Informational only. */
+  reference_period?: string;
+  /** False when the registry deliberately reports item-level completion only
+   *  and no domain/overall score — currently only WHOQOL-BREF. */
+  scoring_implemented?: boolean;
 }
 
 export interface QuestionnaireResult {

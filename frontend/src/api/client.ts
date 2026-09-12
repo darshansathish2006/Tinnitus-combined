@@ -488,6 +488,11 @@ export interface Assessment {
   /** The PHQ-9's separate, non-scored functional-difficulty response (1-4) —
    *  never part of the 0-27 symptom total. */
   phq9_functional_difficulty?: number | null;
+  /** Raw per-item WHOQOL-BREF responses ("whoqol1": 4, ..., "whoqol26": 2),
+   *  1-5 each. No domain/overall score is computed server-side — see
+   *  `clinical.instruments.score_whoqol_bref` — so this instrument is read
+   *  back as completion status only. */
+  whoqol_bref_items?: Record<string, number> | null;
   vas_loudness: number | null;
   vas_annoyance: number | null;
   vas_awareness: number | null;

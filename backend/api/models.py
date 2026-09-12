@@ -439,6 +439,17 @@ class Assessment(models.Model):
     # mistaken for a 10th PHQ-9 question.
     phq9_functional_difficulty = models.IntegerField(null=True, blank=True)
 
+    # World Health Organization Quality of Life — BREF. Raw per-item answers
+    # only (whoqol1..whoqol26, each 1-5) — no persisted score column, for the
+    # same reason as the TFI/ISI/PHQ-9 above, and additionally because no
+    # domain-scoring formula is implemented at all: the published scoring
+    # manual's raw-to-transformed domain conversion tables were not part of
+    # the source supplied for this feature, and no WHOQOL-BREF scoring
+    # previously existed anywhere in this codebase. `score_whoqol_bref()` in
+    # `clinical/instruments.py` reports item-level completion only; it never
+    # fabricates a domain or overall score.
+    whoqol_bref_items = models.JSONField(default=dict, blank=True)
+
     # Short-form screeners administered first under the stepped protocol.
     gad2_score = models.IntegerField(null=True, blank=True)
     pss4_score = models.IntegerField(null=True, blank=True)

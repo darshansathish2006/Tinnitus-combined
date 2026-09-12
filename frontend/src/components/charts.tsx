@@ -1138,7 +1138,32 @@ export function MaskingCurve({
   height = 300,
   maxSafeDb = 85,
 }: {
-  curve: { hz: number; threshold_db: number | null; masked: boolean | null; tested: boolean }[];
+  curve: {
+    hz: number;
+    threshold_db: number | null;
+    masked: boolean | null;
+    tested: boolean;
+    /**
+     * The masker level actually presented for this frequency — distinct from
+     * `threshold_db` (the derived Minimum Masking Level). For a completed
+     * search the two are close but not identical: the fine phase's last
+     * presented level is often the "audible" overshoot one step below the
+     * confirmed MML, and for a frequency that reached the safety ceiling
+     * without ever masking, a masker *was* genuinely presented (this) while
+     * no threshold was ever obtained (`threshold_db` stays `null`).
+     *
+     * `undefined` (not `null`) means this point carries no masker-level data
+     * at all — the existing callers of this chart (`ReferenceLevelPanel`,
+     * the clinical report) only ever had the derived threshold, never the
+     * trial-by-trial history, so they omit this field entirely and the
+     * second series/legend below simply does not render for them. Only the
+     * live in-progress masking screen (`HearingMeasurement.tsx`), which
+     * already holds the full per-frequency trial history in memory, passes
+     * this. `null` means a masker series exists for this chart but this
+     * particular frequency has no value (never fabricated to fill the gap).
+     */
+    masker_db?: number | null;
+  }[];
   referenceDb?: number | null;
   referenceHz?: number | null;
   height?: number;
@@ -1160,20 +1185,37 @@ export function MaskingCurve({
     (p): p is typeof p & { threshold_db: number } => p.threshold_db !== null && p.masked === true
   );
   const unmaskable = curve.filter((p) => p.tested && p.masked === false);
+  // The masker series — only present at all when at least one point carries
+  // `masker_db` (only the live in-progress masking screen passes it; see the
+  // prop doc above). Absent for every existing caller, so this and everything
+  // gated on it is a no-op for them.
+  const maskerPoints = curve.filter(
+    (p): p is typeof p & { masker_db: number } => p.masker_db !== null && p.masker_db !== undefined
+  );
+  const hasMaskerSeries = curve.some((p) => p.masker_db !== undefined);
 
-  if (measured.length === 0) {
+  if (measured.length === 0 && maskerPoints.length === 0) {
     return <p className="meta">{t("masking.chart.noData")}</p>;
   }
 
   const line = measured.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.hz)},${y(p.threshold_db)}`).join(" ");
+  const maskerLine = maskerPoints.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.hz)},${y(p.masker_db)}`).join(" ");
   // The masked region is everything *below* the curve — lower level than the
   // threshold does not cover the percept, so the fill runs down to the axis.
+  // Guarded on `measured.length` (previously implied by the early return
+  // above, which now also lets a masker-only chart through — a live
+  // in-progress test whose completed frequencies all happened to be
+  // ceiling-reached-unmasked, so `measured` is empty while masker levels
+  // for those attempts still exist and are plotted).
   const area =
-    `M${x(measured[0].hz)},${y(0)} ` +
-    measured.map((p) => `L${x(p.hz)},${y(p.threshold_db)}`).join(" ") +
-    ` L${x(measured[measured.length - 1].hz)},${y(0)} Z`;
+    measured.length === 0
+      ? ""
+      : `M${x(measured[0].hz)},${y(0)} ` +
+        measured.map((p) => `L${x(p.hz)},${y(p.threshold_db)}`).join(" ") +
+        ` L${x(measured[measured.length - 1].hz)},${y(0)} Z`;
 
   return (
+    <figure style={{ margin: 0 }}>
     <svg
       viewBox={`0 0 ${width} ${height}`}
       style={{ width: "100%", height: "auto" }}
@@ -1270,6 +1312,65 @@ export function MaskingCurve({
         />
       ))}
 
+      {/* The masker series — the level actually presented at each frequency,
+          alongside the threshold/MML line above. Dashed and square-marked
+          (the same "different measurement" convention `CombinedAudiogramMasking`
+          already uses for its own masking overlay), in the chart's secondary
+          data colour so it reads as a companion series rather than a
+          restyled threshold line. Only ever drawn when the caller actually
+          supplied masker data — see the prop doc. */}
+      {hasMaskerSeries && (
+        <g>
+          <path d={maskerLine} fill="none" stroke="var(--data-2)" strokeWidth={1.6} strokeDasharray="5 3" />
+          {maskerPoints.map((p) => (
+            <rect
+              key={`m-${p.hz}`}
+              x={x(p.hz) - 3}
+              y={y(p.masker_db) - 3}
+              width={6}
+              height={6}
+              fill="var(--data-2)"
+            />
+          ))}
+        </g>
+      )}
+
+      {/* One invisible hit-target per frequency, spanning the full plot
+          height, carrying a native tooltip with both values (when present) —
+          the lightest possible way to answer "what were both readings here?"
+          on hover/tap without a charting library or new hover-state
+          machinery. Purely additive: it draws nothing visible, so every
+          existing caller's rendered pixels are unchanged. */}
+      {curve.map((p) => {
+        const lines = [t("masking.chart.frequencyLabel", { hz: p.hz >= 1000 ? `${p.hz / 1000}k` : p.hz })];
+        if (hasMaskerSeries) {
+          lines.push(
+            p.masker_db !== null && p.masker_db !== undefined
+              ? t("masking.chart.tooltipMasker", { db: p.masker_db.toFixed(0) })
+              : t("masking.chart.tooltipMaskerMissing")
+          );
+        }
+        if (p.tested) {
+          lines.push(
+            p.threshold_db !== null
+              ? t("masking.chart.tooltipThreshold", { db: p.threshold_db.toFixed(0) })
+              : t("masking.chart.tooltipThresholdMissing")
+          );
+        }
+        return (
+          <rect
+            key={`hit-${p.hz}`}
+            x={x(p.hz) - 8}
+            y={pad.top}
+            width={16}
+            height={plotH}
+            fill="transparent"
+          >
+            <title>{lines.join("\n")}</title>
+          </rect>
+        );
+      })}
+
       {/* Frequencies that would not mask at any deliverable level. Marked with
           a cross at the ceiling rather than omitted — "we tried and it did not
           work" is the finding that contraindicates masking therapy. */}
@@ -1317,6 +1418,15 @@ export function MaskingCurve({
 
       <rect x={pad.left} y={pad.top} width={plotW} height={plotH} fill="none" stroke="var(--line-strong)" />
     </svg>
+    {hasMaskerSeries && (
+      <ChartLegend
+        items={[
+          { label: t("masking.chart.maskerLabel"), color: "var(--data-2)", dashed: true },
+          { label: t("masking.chart.thresholdLabel"), color: "var(--data)" },
+        ]}
+      />
+    )}
+    </figure>
   );
 }
 

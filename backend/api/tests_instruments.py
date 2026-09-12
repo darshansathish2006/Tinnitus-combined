@@ -46,9 +46,13 @@ from clinical.instruments import (
     PHQ9_ITEM_IDS,
     TFI_ITEM_IDS,
     TFI_SUBSCALES,
+    WHOQOL_BREF_ITEM_CODES,
+    WHOQOL_BREF_ITEM_IDS,
+    WHOQOL_BREF_ITEMS,
     score_isi,
     score_phq9,
     score_tfi,
+    score_whoqol_bref,
 )
 from clinical.redflags import evaluate_red_flags
 
@@ -930,3 +934,283 @@ class Phq9ApiIntegrationTests(TestCase):
         self.assertEqual(q["isi"]["score"], 14)
         self.assertEqual(q["thi"]["score"], 100)
         self.assertEqual(q["thi"]["score"], 100)
+
+
+def _whoqol_answers(value=3, **overrides):
+    """All 26 WHOQOL-BREF items at `value` (1-5), except `overrides`."""
+    out = {item_id: value for item_id in WHOQOL_BREF_ITEM_IDS}
+    out.update(overrides)
+    return out
+
+
+class WhoqolBrefScoringTests(SimpleTestCase):
+    """`score_whoqol_bref` and the item bank against the published WHOQOL-BREF
+    patient form (Appendix 8) — completion only, never a fabricated domain or
+    overall score. See `clinical/instruments.py` for why one is not computed."""
+
+    # -- structure --------------------------------------------------------- #
+    def test_exactly_26_items_no_missing_no_duplicated(self):
+        self.assertEqual(len(WHOQOL_BREF_ITEMS), 26)
+        self.assertEqual(len(WHOQOL_BREF_ITEM_IDS), len(set(WHOQOL_BREF_ITEM_IDS)))
+        self.assertEqual({f"whoqol{n}" for n in range(1, 27)}, set(WHOQOL_BREF_ITEM_IDS))
+
+    def test_item_26_is_present_not_dropped(self):
+        # The easiest bug for a 26-item form to acquire: implementing only 25.
+        self.assertIn("whoqol26", WHOQOL_BREF_ITEM_IDS)
+        last = next(i for i in WHOQOL_BREF_ITEMS if i["id"] == "whoqol26")
+        self.assertEqual(last["code"], "F8.1")
+        self.assertIn("negative feelings", last["text"])
+
+    def test_items_are_in_published_order_1_through_26(self):
+        self.assertEqual([i["n"] for i in WHOQOL_BREF_ITEMS], list(range(1, 27)))
+        self.assertEqual(WHOQOL_BREF_ITEM_IDS, [f"whoqol{n}" for n in range(1, 27)])
+
+    def test_published_item_codes_preserved_in_order(self):
+        expected_codes = [
+            "G1", "G4", "F1.4", "F11.3", "F4.1", "F24.2", "F5.3", "F16.1", "F22.1",
+            "F2.1", "F7.1", "F18.1", "F20.1", "F21.1", "F9.1", "F3.3", "F10.3",
+            "F12.4", "F6.3", "F13.3", "F15.3", "F14.4", "F17.3", "F19.3", "F23.3", "F8.1",
+        ]
+        self.assertEqual([i["code"] for i in WHOQOL_BREF_ITEMS], expected_codes)
+        self.assertEqual(WHOQOL_BREF_ITEM_CODES["whoqol1"], "G1")
+        self.assertEqual(WHOQOL_BREF_ITEM_CODES["whoqol26"], "F8.1")
+
+    def test_response_scales_are_not_one_generic_scale_for_all_26(self):
+        kinds = {i["id"]: i["kind"] for i in WHOQOL_BREF_ITEMS}
+        self.assertEqual(kinds["whoqol1"], "poor_good")
+        self.assertEqual(kinds["whoqol2"], "satisfaction")
+        for n in range(3, 7):
+            self.assertEqual(kinds[f"whoqol{n}"], "amount", n)
+        for n in range(7, 10):
+            self.assertEqual(kinds[f"whoqol{n}"], "amount_extremely", n)
+        for n in range(10, 15):
+            self.assertEqual(kinds[f"whoqol{n}"], "capacity", n)
+        self.assertEqual(kinds["whoqol15"], "poor_good")
+        for n in range(16, 26):
+            self.assertEqual(kinds[f"whoqol{n}"], "satisfaction", n)
+        self.assertEqual(kinds["whoqol26"], "frequency")
+
+    def test_question_26_wording_and_scale_match_the_source(self):
+        item = next(i for i in WHOQOL_BREF_ITEMS if i["id"] == "whoqol26")
+        self.assertEqual(
+            item["text"],
+            "How often do you have negative feelings such as blue mood, despair, anxiety, depression?",
+        )
+        self.assertEqual(item["kind"], "frequency")
+
+    # -- scoring: completion only, never fabricated ------------------------- #
+    def test_all_26_answered_reports_complete_with_no_fabricated_score(self):
+        result = score_whoqol_bref(_whoqol_answers(value=4))
+        self.assertEqual(result.answered, 26)
+        self.assertEqual(result.expected, 26)
+        self.assertTrue(result.complete)
+        self.assertIsNone(result.score)
+        self.assertIsNone(result.grade)
+
+    def test_25_of_26_answered_is_not_complete_and_still_no_score(self):
+        answers = {k: v for k, v in _whoqol_answers(value=3).items() if k != "whoqol26"}
+        result = score_whoqol_bref(answers)
+        self.assertEqual(result.answered, 25)
+        self.assertFalse(result.complete)
+        self.assertIsNone(result.score)
+
+    def test_unanswered_is_not_scored_as_zero_or_one(self):
+        result = score_whoqol_bref(None)
+        self.assertEqual(result.answered, 0)
+        self.assertIsNone(result.score)
+
+    def test_only_accepts_the_legal_1_to_5_range(self):
+        for bad in (0, -1, 6, 3.5):
+            result = score_whoqol_bref({"whoqol1": bad})
+            self.assertEqual(result.answered, 0, bad)
+        result = score_whoqol_bref({"whoqol1": 1, "whoqol2": 5})
+        self.assertEqual(result.answered, 2)
+
+
+class WhoqolBrefApiIntegrationTests(TestCase):
+    """The "About Your Tinnitus" wiring for WHOQOL-BREF: real item content,
+    save/resume, skip-never-a-zero, and no fabricated score even when
+    complete — following the ISI/PHQ-9 pattern above."""
+
+    def setUp(self):
+        self.client = APIClient()
+        register = self.client.post(
+            "/api/auth/register",
+            {
+                "email": "whoqol.tester@example.com",
+                "password": "probepass2026",
+                "full_name": "Whoqol Tester",
+                "role": "patient",
+                "date_of_birth": "1990-01-01",
+                "sex": "female",
+            },
+            format="json",
+        )
+        self.assertEqual(register.status_code, status.HTTP_201_CREATED)
+        self.token = register.json()["access_token"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        created = self.client.post("/api/assessments")
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED)
+        self.assessment_id = created.json()["id"]
+
+    def test_registry_serves_26_items_and_six_response_scales(self):
+        registry = self.client.get("/api/assessments/instruments").json()["instruments"]["whoqol_bref"]
+        self.assertEqual(len(registry["items"]), 26)
+        self.assertEqual(
+            set(registry["option_sets"].keys()),
+            {"poor_good", "satisfaction", "amount", "amount_extremely", "capacity", "frequency"},
+        )
+        self.assertFalse(registry["scoring_implemented"])
+        self.assertIn("last two weeks", registry["reference_period"])
+
+    def test_all_26_answered_and_completed_reports_available_with_no_score(self):
+        answers = _whoqol_answers(value=4)
+        patch = self.client.patch(
+            f"/api/assessments/{self.assessment_id}",
+            {"whoqol_bref_items": answers, "questionnaire_status": {"whoqol_bref": "completed"}},
+            format="json",
+        )
+        self.assertEqual(patch.status_code, status.HTTP_200_OK)
+
+        finalise = self.client.post(f"/api/assessments/{self.assessment_id}/finalise")
+        self.assertEqual(finalise.status_code, status.HTTP_200_OK)
+
+        report = self.client.get(f"/api/reports/clinical?assessment_id={self.assessment_id}")
+        self.assertEqual(report.status_code, status.HTTP_200_OK)
+        body = report.json()
+
+        whoqol = body["questionnaires"]["whoqol_bref"]
+        self.assertEqual(whoqol["answered"], 26)
+        self.assertTrue(whoqol["complete"])
+        self.assertIsNone(whoqol["score"])
+
+        domain = next(d for d in body["about_your_tinnitus"] if d["key"] == "whoqol_bref")
+        self.assertEqual(domain["kind"], "real")
+        self.assertTrue(domain["available"], "26/26 answered must count as available even with no score")
+        self.assertIsNone(domain["score"], "WHOQOL-BREF must never carry a fabricated score")
+        self.assertFalse(domain["required"])
+
+    def test_skipped_whoqol_bref_is_not_a_zero_and_does_not_block_core(self):
+        skip = self.client.patch(
+            f"/api/assessments/{self.assessment_id}",
+            {"questionnaire_status": {"whoqol_bref": "skipped"}},
+            format="json",
+        )
+        self.assertEqual(skip.status_code, status.HTTP_200_OK)
+
+        # The Core Tinnitus Assessment, completed independently of the skip above.
+        self.client.patch(
+            f"/api/assessments/{self.assessment_id}",
+            {
+                "thi_items": {"thi7": 0, "thi1": 0, "thi22": 0, "thi13": 0, "thi21": 0},
+                "vas": {"vas_loudness": 5, "vas_annoyance": 5, "vas_awareness": 5, "vas_sleep_interference": 5},
+                "tfi_items": {f"tfi{n}": (50 if n in (1, 3) else 5) for n in range(1, 26)},
+                "questionnaire_status": {"thi": "completed", "vas": "completed", "tfi": "completed"},
+            },
+            format="json",
+        )
+        finalise = self.client.post(f"/api/assessments/{self.assessment_id}/finalise")
+        self.assertEqual(
+            finalise.status_code, status.HTTP_200_OK, "a skipped optional instrument must never block finalising"
+        )
+
+        report = self.client.get(f"/api/reports/clinical?assessment_id={self.assessment_id}")
+        domain = next(d for d in report.json()["about_your_tinnitus"] if d["key"] == "whoqol_bref")
+        self.assertEqual(domain["status"], "skipped")
+        self.assertFalse(domain["available"])
+        self.assertIsNone(domain["score"], "a skipped instrument must read as skipped, never as a score of 0")
+        self.assertIn("skipped", domain["reason"].lower())
+
+    def test_incomplete_whoqol_bref_reports_unavailable_not_a_fake_score(self):
+        answers = {k: v for k, v in _whoqol_answers(value=3).items() if k != "whoqol26"}  # 25 of 26
+        self.client.patch(
+            f"/api/assessments/{self.assessment_id}",
+            {"whoqol_bref_items": answers, "questionnaire_status": {"whoqol_bref": "completed"}},
+            format="json",
+        )
+        finalise = self.client.post(f"/api/assessments/{self.assessment_id}/finalise")
+        self.assertEqual(finalise.status_code, status.HTTP_200_OK)
+
+        report = self.client.get(f"/api/reports/clinical?assessment_id={self.assessment_id}")
+        domain = next(d for d in report.json()["about_your_tinnitus"] if d["key"] == "whoqol_bref")
+        self.assertFalse(domain["available"])
+        self.assertIsNone(domain["score"])
+        self.assertIn("enough valid responses", domain["reason"])
+
+    def test_partial_answers_persist_across_saves_and_resume_at_correct_point(self):
+        first_ten = {f"whoqol{n}": 3 for n in range(1, 11)}
+        patch1 = self.client.patch(
+            f"/api/assessments/{self.assessment_id}",
+            {"whoqol_bref_items": first_ten, "questionnaire_status": {"whoqol_bref": "in_progress"}},
+            format="json",
+        )
+        self.assertEqual(patch1.status_code, status.HTTP_200_OK)
+        row = self.client.get(f"/api/assessments/{self.assessment_id}")
+        self.assertEqual(row.json()["whoqol_bref_items"], first_ten)
+        self.assertEqual(row.json()["questionnaire_status"]["whoqol_bref"], "in_progress")
+
+        remaining = {f"whoqol{n}": 4 for n in range(11, 27)}
+        self.client.patch(
+            f"/api/assessments/{self.assessment_id}",
+            {"whoqol_bref_items": remaining, "questionnaire_status": {"whoqol_bref": "completed"}},
+            format="json",
+        )
+        row2 = self.client.get(f"/api/assessments/{self.assessment_id}")
+        merged = row2.json()["whoqol_bref_items"]
+        self.assertEqual(len(merged), 26, "the two partial saves must merge into one 26-item record")
+        self.assertEqual(merged["whoqol1"], 3)
+        self.assertEqual(merged["whoqol26"], 4)
+
+    def test_measurement_fields_locked_but_whoqol_bref_items_editable_after_finalise(self):
+        self.client.patch(
+            f"/api/assessments/{self.assessment_id}",
+            {"whoqol_bref_items": _whoqol_answers(value=2)},
+            format="json",
+        )
+        self.client.post(f"/api/assessments/{self.assessment_id}/finalise")
+
+        locked = self.client.patch(
+            f"/api/assessments/{self.assessment_id}", {"pitch_match_hz": 4000}, format="json"
+        )
+        self.assertEqual(locked.status_code, status.HTTP_409_CONFLICT)
+
+        still_editable = self.client.patch(
+            f"/api/assessments/{self.assessment_id}",
+            {"whoqol_bref_items": _whoqol_answers(value=5), "questionnaire_status": {"whoqol_bref": "completed"}},
+            format="json",
+        )
+        self.assertEqual(still_editable.status_code, status.HTTP_200_OK)
+
+        report = self.client.get(f"/api/reports/clinical?assessment_id={self.assessment_id}")
+        self.assertEqual(report.json()["questionnaires"]["whoqol_bref"]["answered"], 26)
+
+    def test_off_grid_value_rejected_end_to_end(self):
+        answers = _whoqol_answers(value=3)
+        answers["whoqol10"] = 3.5  # not a legal WHOQOL-BREF response
+        self.client.patch(
+            f"/api/assessments/{self.assessment_id}",
+            {"whoqol_bref_items": answers, "questionnaire_status": {"whoqol_bref": "completed"}},
+            format="json",
+        )
+        self.client.post(f"/api/assessments/{self.assessment_id}/finalise")
+        report = self.client.get(f"/api/reports/clinical?assessment_id={self.assessment_id}")
+        self.assertEqual(report.json()["questionnaires"]["whoqol_bref"]["answered"], 25)
+
+    def test_unrelated_instruments_unaffected_by_whoqol_bref(self):
+        """Regression: ISI/THI keep scoring correctly alongside a WHOQOL-BREF submission."""
+        self.client.patch(
+            f"/api/assessments/{self.assessment_id}",
+            {
+                "whoqol_bref_items": _whoqol_answers(value=1),
+                "isi_items": {"isi1a": 2, "isi1b": 2, "isi1c": 2, "isi2": 2, "isi3": 2, "isi4": 2, "isi5": 2},
+                "thi_items": {"thi7": 4, "thi1": 4, "thi22": 4, "thi13": 4, "thi21": 4},
+            },
+            format="json",
+        )
+        self.client.post(f"/api/assessments/{self.assessment_id}/finalise")
+        report = self.client.get(f"/api/reports/clinical?assessment_id={self.assessment_id}")
+        q = report.json()["questionnaires"]
+        self.assertEqual(q["isi"]["score"], 14)
+        self.assertEqual(q["thi"]["score"], 100)
+        self.assertEqual(q["whoqol_bref"]["answered"], 26)
+        self.assertIsNone(q["whoqol_bref"]["score"])

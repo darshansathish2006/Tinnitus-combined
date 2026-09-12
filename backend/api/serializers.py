@@ -392,6 +392,7 @@ class AssessmentSubmitSerializer(serializers.Serializer):
     # The PHQ-9's separate, non-scored functional-difficulty item — never
     # folded into the 0-27 symptom total.
     phq9_functional_difficulty = serializers.IntegerField(required=False, allow_null=True, min_value=1, max_value=4)
+    whoqol_bref_items = serializers.DictField(required=False)
     sleep_screen_items = serializers.DictField(required=False)
     # Per-instrument status for the About Your Tinnitus module's skip feature —
     # {"thi": "completed"} or {"gad7": "skipped"}. Merged onto the stored dict,

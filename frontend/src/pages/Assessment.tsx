@@ -451,9 +451,8 @@ export default function Assessment() {
    * it), a patient who stops partway through the whole module still has every
    * section they did finish on the record, and a skipped section is recorded
    * as skipped immediately rather than only if they happen to reach the last
-   * section. WHOQOL-BREF is not saved here at all — that section has no item
-   * content to save (see `AboutYourTinnitus`) and is never represented as
-   * skipped, since nothing was actually offered and declined.
+   * section. WHOQOL-BREF is saved through the same generic path as every
+   * other real instrument here — see `whoqol_bref_items` below.
    */
   const MODULE2_ITEMS_FIELD: Record<string, string> = {
     vas: "vas",
@@ -463,6 +462,7 @@ export default function Assessment() {
     phq9: "phq9_items",
     gad7: "gad7_items",
     pss10: "pss10_items",
+    whoqol_bref: "whoqol_bref_items",
   };
 
   async function saveModule2Section(
@@ -866,6 +866,7 @@ export default function Assessment() {
             phq9_items: assessment?.phq9_items ?? undefined,
             gad7_items: assessment?.gad7_items ?? undefined,
             pss10_items: assessment?.pss10_items ?? undefined,
+            whoqol_bref_items: assessment?.whoqol_bref_items ?? undefined,
             questionnaire_status: assessment?.questionnaire_status,
           }}
           onSectionSave={saveModule2Section}

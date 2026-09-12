@@ -2162,7 +2162,14 @@
       "legend": "The shaded region is where your tinnitus is covered. The lowest point on the line is the frequency where the least sound is needed — that is your reference level.",
       "audible": "Tinnitus audible",
       "masked": "Tinnitus masked",
-      "unsafe": "Above safe listening level"
+      "unsafe": "Above safe listening level",
+      "maskerLabel": "Masker",
+      "thresholdLabel": "Threshold / MML",
+      "frequencyLabel": "{{hz}} Hz",
+      "tooltipMasker": "Masker: {{db}} dB",
+      "tooltipMaskerMissing": "Masker: not tested",
+      "tooltipThreshold": "Threshold: {{db}} dB",
+      "tooltipThresholdMissing": "Threshold: Not obtained"
     },
     "reference": {
       "title": "Reference level",

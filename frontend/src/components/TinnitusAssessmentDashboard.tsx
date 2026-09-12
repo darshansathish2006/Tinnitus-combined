@@ -249,6 +249,25 @@ function AboutYourTinnitusCard({
                   </div>
                 ))}
               </div>
+            ) : d.available && d.key === "whoqol_bref" ? (
+              // No domain/overall score exists for WHOQOL-BREF (see
+              // `clinical.instruments.score_whoqol_bref`) — "available" here
+              // means every item was answered, so this shows the honest
+              // completion count rather than a fabricated number.
+              <div className="stack stack-2">
+                <span className="mono" style={{ fontWeight: 700, fontSize: "var(--fs-lead)" }}>
+                  {report?.questionnaires?.whoqol_bref?.answered ?? 26} / {report?.questionnaires?.whoqol_bref?.expected ?? 26}
+                </span>
+                <span className="meta">
+                  {t("results.dashboard.whoqolQuestionsAnswered", { defaultValue: "questions answered" })}
+                </span>
+                <p className="meta dim" style={{ margin: 0 }}>
+                  {t("results.dashboard.whoqolScoringPending", {
+                    defaultValue:
+                      "Domain scoring for WHOQOL-BREF is not yet implemented in this system — responses are recorded, but no quality-of-life score is calculated.",
+                  })}
+                </p>
+              </div>
             ) : d.available ? (
               <div className="stack stack-3">
                 <div className="row row--between row--baseline">

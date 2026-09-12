@@ -41,9 +41,8 @@ await build({
   logLevel: "error",
 });
 
-const { ThresholdTracker, PitchMatcher, analyseResidualInhibition, toSensationLevel } = await import(
-  pathToFileURL(outfile).href
-);
+const { ThresholdTracker, PitchMatcher, analyseResidualInhibition, toSensationLevel, buildMaskingCurvePoints } =
+  await import(pathToFileURL(outfile).href);
 
 let failures = 0;
 const check = (name, condition, detail = "") => {
@@ -291,6 +290,96 @@ check(
 check("below range clamps to the lowest measured", interpolateThreshold(audiogram, 100) === 10);
 check("above range clamps to the highest measured", interpolateThreshold(audiogram, 16000) === 60);
 check("empty audiogram returns null, not zero", interpolateThreshold({}, 4000) === null);
+
+/* ------------------------------------------------------------------------- */
+console.log("\nMasking curve chart data (buildMaskingCurvePoints)");
+console.log("  The masking curve graph's only data source — must plot exactly what");
+console.log("  the adaptive search actually produced, never a fabricated pairing.\n");
+
+// Test 1 — both masker and threshold available (the ordinary case: the fine
+// phase ends on a confirming "audible" one step below the bracketed MML).
+{
+  const trials = [
+    { trial_number: 1, phase: "coarse", level_db: 40, response: "audible", at: 0 },
+    { trial_number: 2, phase: "coarse", level_db: 50, response: "masked", at: 1 },
+    { trial_number: 3, phase: "fine", level_db: 47, response: "masked", at: 2 },
+    { trial_number: 4, phase: "fine", level_db: 44, response: "audible", at: 3 },
+  ];
+  const points = buildMaskingCurvePoints([1000], [{ frequency_hz: 1000, trials, mml_db: 47 }]);
+  const p = points[0];
+  check(
+    "both values available: masker and threshold both plotted and distinct",
+    p.tested === true && p.threshold_db === 47 && p.masker_db === 44 && p.masker_db !== p.threshold_db,
+    `threshold_db=${p.threshold_db}, masker_db=${p.masker_db}`
+  );
+}
+
+// Test 2 — masker only: the safety ceiling was reached without the tinnitus
+// ever being masked, so a masker genuinely was presented (the ceiling level)
+// but no threshold was ever obtained. Must not fabricate a threshold.
+{
+  const trials = [
+    { trial_number: 1, phase: "coarse", level_db: 65, response: "audible", at: 0 },
+    { trial_number: 2, phase: "coarse", level_db: 75, response: "audible", at: 1 },
+    { trial_number: 3, phase: "coarse", level_db: 85, response: "audible", at: 2 },
+  ];
+  const points = buildMaskingCurvePoints([4000], [{ frequency_hz: 4000, trials, mml_db: null }]);
+  const p = points[0];
+  check(
+    "masker only: ceiling level plotted, threshold stays null (not fabricated)",
+    p.masker_db === 85 && p.threshold_db === null && p.masked === false,
+    `masker_db=${p.masker_db}, threshold_db=${p.threshold_db}, masked=${p.masked}`
+  );
+}
+
+// Test 3 — threshold only: a degenerate result with no trial history at all.
+// The function must not invent a masker level to fill the gap.
+{
+  const points = buildMaskingCurvePoints([2000], [{ frequency_hz: 2000, trials: [], mml_db: 30 }]);
+  const p = points[0];
+  check(
+    "threshold only: threshold plotted, masker stays null (not fabricated)",
+    p.threshold_db === 30 && p.masker_db === null,
+    `threshold_db=${p.threshold_db}, masker_db=${p.masker_db}`
+  );
+}
+
+// Test 4 — multiple frequencies: each keeps its own masker/threshold pair,
+// with no cross-contamination between them, and an untested frequency in the
+// middle of the sequence gets nulls rather than an interpolated guess.
+{
+  const results = [
+    { frequency_hz: 1000, trials: [{ trial_number: 1, phase: "fine", level_db: 22, response: "masked", at: 0 }], mml_db: 25 },
+    { frequency_hz: 3000, trials: [{ trial_number: 1, phase: "fine", level_db: 38, response: "masked", at: 0 }], mml_db: 40 },
+  ];
+  const points = buildMaskingCurvePoints([1000, 2000, 3000], results);
+  const byHz = Object.fromEntries(points.map((p) => [p.hz, p]));
+  check(
+    "multiple frequencies: 1000 Hz pair is its own, not 3000 Hz's",
+    byHz[1000].threshold_db === 25 && byHz[1000].masker_db === 22,
+    `1000 Hz -> threshold=${byHz[1000].threshold_db}, masker=${byHz[1000].masker_db}`
+  );
+  check(
+    "multiple frequencies: 3000 Hz pair is its own, not 1000 Hz's",
+    byHz[3000].threshold_db === 40 && byHz[3000].masker_db === 38,
+    `3000 Hz -> threshold=${byHz[3000].threshold_db}, masker=${byHz[3000].masker_db}`
+  );
+  check(
+    "an untested frequency in the middle gets nulls, not an interpolated guess",
+    byHz[2000].tested === false && byHz[2000].threshold_db === null && byHz[2000].masker_db === null,
+    `2000 Hz -> tested=${byHz[2000].tested}, threshold=${byHz[2000].threshold_db}, masker=${byHz[2000].masker_db}`
+  );
+}
+
+// Test 5 — no data at all: every point comes back untested, nothing invented.
+{
+  const points = buildMaskingCurvePoints([1000, 2000, 3000], []);
+  check(
+    "no data: every point is untested with no fabricated values",
+    points.every((p) => !p.tested && p.threshold_db === null && p.masker_db === null && p.masked === null),
+    JSON.stringify(points)
+  );
+}
 
 /* ------------------------------------------------------------------------- */
 console.log(`\n${failures === 0 ? "ALL CHECKS PASSED" : `${failures} CHECK(S) FAILED`}\n`);

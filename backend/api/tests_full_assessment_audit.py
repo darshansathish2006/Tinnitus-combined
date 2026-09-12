@@ -155,17 +155,29 @@ class ThiGad7Pss10VasApiTests(TestCase):
         # The pain question is never one of the four scored tinnitus scales.
         self.assertNotIn("vas_pain", [item["id"] for item in registry["vas"]["items"]])
 
-    def test_whoqol_bref_remains_an_honest_stub(self):
-        # Renamed from "eq5d5l" during the About Your Tinnitus two-section
-        # restructuring - WHOQOL-BREF has no validated item content anywhere
-        # in this codebase (repo-wide search found zero "whoqol" hits), so
-        # this stays a stub rather than being backed by fabricated content.
+    def test_whoqol_bref_is_a_genuine_26_item_instrument_with_no_fabricated_score(self):
+        # Formerly an honest "eq5d5l"-renamed stub with no item content at
+        # all (repo-wide search found zero "whoqol" hits). Now backed by the
+        # published WHOQOL-BREF patient form's 26 items in full — see
+        # `WhoqolBrefScoringTests`/`WhoqolBrefApiIntegrationTests` in
+        # `tests_instruments.py` for the item-bank and API-level coverage.
+        # This still asserts the one thing that must never change: no
+        # domain/overall score is fabricated, because no validated scoring
+        # formula for this instrument exists anywhere in this codebase.
+        answers = {f"whoqol{n}": 3 for n in range(1, 27)}
+        self.assertEqual(
+            self._patch({"whoqol_bref_items": answers, "questionnaire_status": {"whoqol_bref": "completed"}}).status_code,
+            200,
+        )
         self.assertEqual(self._finalise().status_code, 200)
         report = self._report().json()
+        whoqol = report["questionnaires"]["whoqol_bref"]
+        self.assertEqual(whoqol["answered"], 26)
+        self.assertIsNone(whoqol["score"])
         domain = next(d for d in report["about_your_tinnitus"] if d["key"] == "whoqol_bref")
         self.assertEqual(domain["instrument"], "WHOQOL-BREF")
-        self.assertEqual(domain["kind"], "stub")
-        self.assertFalse(domain["available"])
+        self.assertEqual(domain["kind"], "real")
+        self.assertTrue(domain["available"])
         self.assertIsNone(domain["score"])
         self.assertFalse(domain["required"])
 

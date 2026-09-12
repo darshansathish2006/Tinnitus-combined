@@ -74,6 +74,7 @@ const MODULE2_ITEMS_FIELD: Record<string, string> = {
   phq9: "phq9_items",
   gad7: "gad7_items",
   pss10: "pss10_items",
+  whoqol_bref: "whoqol_bref_items",
 };
 
 // Three.js is ~500 kB and the summary renders long before it arrives, so the

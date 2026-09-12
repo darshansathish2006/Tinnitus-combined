@@ -29,21 +29,25 @@
  * questionnaire is administered, scored, or persisted changed — only how a
  * patient chooses which one to start.
  *
- * Seven of the eight have real, validated item content already in this
- * codebase and are administered in full, directly (not as short-form
- * screeners that later escalate): VAS, THI (the full 25-item form — see
- * `long_form_items` on the registry's `thi` entry), TFI (the full 25-item
- * form, with its own mix of percentage and 0-10 items — see
- * `resolveItemOptions`), ISI (five displayed questions, the first a grouped
- * item with three independently-scored rows — see `groupItemsIntoPages`),
- * GAD-7, PHQ-9 (nine items, plus one separate, non-scored functional-
- * difficulty question — see `PhqFunctionalDifficultyStep`), PSS-10. The
- * remaining one — WHOQOL-BREF (formerly labelled "EQ-5D-5L", which itself was
- * never more than this same empty placeholder — see `MODULE2_SECTIONS`) — has
- * no validated item content anywhere in this codebase. Rather than invent,
- * approximate, or silently fabricate one, that section shows an honest "not
- * yet available" notice and carries no Skip (skipping implies declining
- * something real) and no score.
+ * All eight have real, validated item content in this codebase and are
+ * administered in full, directly (not as short-form screeners that later
+ * escalate): VAS, THI (the full 25-item form — see `long_form_items` on the
+ * registry's `thi` entry), TFI (the full 25-item form, with its own mix of
+ * percentage and 0-10 items — see `resolveItemOptions`), ISI (five displayed
+ * questions, the first a grouped item with three independently-scored rows —
+ * see `groupItemsIntoPages`), GAD-7, PHQ-9 (nine items, plus one separate,
+ * non-scored functional-difficulty question — see
+ * `PhqFunctionalDifficultyStep`), PSS-10, and WHOQOL-BREF (26 items, six
+ * response scales — see `clinical/instruments.py::WHOQOL_BREF_ITEMS`).
+ * WHOQOL-BREF's item content and response wording are reproduced verbatim
+ * from the published patient form, but — unlike the other seven — no
+ * domain/overall score is computed for it: the published scoring manual's
+ * raw-to-transformed conversion tables were not part of the source supplied
+ * for this feature, so `score_whoqol_bref()` reports completion only
+ * (`answered`/`expected`/`complete`), never a fabricated number. This section
+ * still offers Skip and shows a completed/skipped status exactly like every
+ * other optional instrument — only the Results card's score display differs
+ * (see `AboutYourTinnitusCard` in `TinnitusAssessmentDashboard.tsx`).
  *
  * Every real section is a single page showing every item and every response
  * option at once — never a bare heading — with (for optional sections) Skip
@@ -106,13 +110,12 @@ export const MODULE2_SECTIONS: Module2Section[] = [
   { key: "gad7", category: "Anxiety", instrumentAbbrev: "GAD-7", instrumentFullName: "Generalised Anxiety Disorder 7-item scale", kind: "real", registryKey: "gad7", required: false },
   { key: "phq9", category: "Mood / Depression", instrumentAbbrev: "PHQ-9", instrumentFullName: "Patient Health Questionnaire-9", kind: "real", registryKey: "phq9", required: false },
   { key: "pss10", category: "Perceived Stress", instrumentAbbrev: "PSS-10", instrumentFullName: "Perceived Stress Scale", kind: "real", registryKey: "pss10", required: false },
-  // WHOQOL-BREF has no validated item content anywhere in this codebase (a
-  // repo-wide search found zero "whoqol" hits). This was "eq5d5l" (EQ-5D-5L),
-  // itself never more than the same honest stub — no EQ-5D-5L item bank,
-  // scoring, or model field exists either — so this renames an empty
-  // placeholder's label; it does not relabel real EQ-5D-5L content or data.
-  // `kind: "stub"` stays: nothing here is fabricated.
-  { key: "whoqol_bref", category: "Quality of Life", instrumentAbbrev: "WHOQOL-BREF", instrumentFullName: "World Health Organization Quality of Life — BREF", kind: "stub", required: false },
+  // 26 items, verbatim from the published patient form — see the module
+  // docstring above and `clinical/instruments.py::WHOQOL_BREF_ITEMS`. No
+  // domain/overall score is computed (`score_whoqol_bref` reports completion
+  // only), so `kind` stays "real" — the item content is genuine — while the
+  // Results card shows a completion count instead of a score for this one key.
+  { key: "whoqol_bref", category: "Quality of Life", instrumentAbbrev: "WHOQOL-BREF", instrumentFullName: "World Health Organization Quality of Life — BREF", kind: "real", registryKey: "whoqol_bref", required: false },
 ];
 
 export const MODULE2_CORE_SECTIONS = MODULE2_SECTIONS.filter((s) => s.required);
@@ -126,6 +129,7 @@ export interface Module2InitialData {
   phq9_items?: Record<string, number>;
   gad7_items?: Record<string, number>;
   pss10_items?: Record<string, number>;
+  whoqol_bref_items?: Record<string, number>;
   questionnaire_status?: Record<string, string>;
 }
 
@@ -522,6 +526,19 @@ function GuidedInstrumentSectionForm({
   const isLast = index === pages.length - 1;
   const isFirst = index === 0;
 
+  /**
+   * An instructions screen before Question 1 — generic, not WHOQOL-BREF-
+   * specific: it shows whenever the registry entry carries `instructions`
+   * (currently only WHOQOL-BREF does) and the section is being started fresh
+   * rather than resumed. A resume (some answers already on file, from an
+   * "in_progress" autosave) skips straight back to where the patient left
+   * off — they have already seen the instructions once — and so does
+   * reopening a *completed* section for View/Retake (`startAtLastPage`).
+   */
+  const [showIntro, setShowIntro] = useState(
+    () => Boolean(spec?.instructions) && Object.keys(answers).length === 0 && !startAtLastPage
+  );
+
   function goBack() {
     if (!isFirst) setIndex((i) => i - 1);
   }
@@ -578,6 +595,37 @@ function GuidedInstrumentSectionForm({
   // Progress against the 5 *displayed* ISI questions, not its 7 underlying
   // components — a page counts once every row on it is answered.
   const answeredPages = pages.filter((p) => p.every((it) => answers[it.id] !== undefined)).length;
+
+  if (showIntro) {
+    return (
+      <Panel title={section.instrumentAbbrev} bracketed>
+        <div className="stack stack-4">
+          <p style={{ fontSize: "var(--fs-body)", lineHeight: 1.6, maxWidth: "42em" }}>
+            {spec?.instructions}
+          </p>
+          <p className="meta dim" style={{ margin: 0 }}>
+            {t("assessment.module2.introQuestionCount", {
+              count: pages.length,
+              defaultValue: `${pages.length} questions.`,
+            })}
+          </p>
+          <hr className="rule" />
+          <div className="row row--between">
+            {allowSkip ? (
+              <button type="button" className="btn" onClick={onSkip} disabled={saving}>
+                {t("assessment.module2.skip", { defaultValue: `Skip ${section.instrumentAbbrev}` })}
+              </button>
+            ) : (
+              <span />
+            )}
+            <button type="button" className="btn btn--primary" onClick={() => setShowIntro(false)}>
+              {t("assessment.module2.begin", { defaultValue: "Begin" })} →
+            </button>
+          </div>
+        </div>
+      </Panel>
+    );
+  }
 
   return (
     <Panel
@@ -1204,6 +1252,7 @@ export default function AboutYourTinnitus({
     phq9: initial.phq9_items,
     gad7: initial.gad7_items,
     pss10: initial.pss10_items,
+    whoqol_bref: initial.whoqol_bref_items,
   };
 
   /* -------------------------------------------------------------------- */

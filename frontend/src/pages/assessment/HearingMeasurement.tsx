@@ -26,6 +26,7 @@ import {
   LoudnessMatcher,
   MaskingLevelFinder,
   PitchNarrower,
+  buildMaskingCurvePoints,
   type LoudnessFineResponse,
   type LoudnessResponse,
   type LoudnessTrial,
@@ -1582,15 +1583,7 @@ function MaskingModule({
       {testedCount >= 2 && (
         <Panel title={t("masking.chart.title")} bracketed>
           <MaskingCurve
-            curve={MASKING_FREQUENCIES.map((f) => {
-              const found = results.find((r) => r.frequency_hz === f);
-              return {
-                hz: f,
-                threshold_db: found?.mml_db ?? null,
-                masked: found ? found.mml_db !== null : null,
-                tested: Boolean(found),
-              };
-            })}
+            curve={buildMaskingCurvePoints(MASKING_FREQUENCIES, results)}
             referenceDb={
               results.some((r) => r.mml_db !== null)
                 ? Math.min(...results.filter((r) => r.mml_db !== null).map((r) => r.mml_db as number))
