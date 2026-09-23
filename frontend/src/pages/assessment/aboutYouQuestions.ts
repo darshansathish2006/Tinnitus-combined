@@ -982,34 +982,6 @@ export const ABOUT_YOU_SECTIONS: AboutYouSection[] = [
   },
 ];
 
-/** Shown after Section 22, before the existing Continue button. */
-export const SNAPSHOT_SECTION: AboutYouSection = {
-  id: "snapshot",
-  title: "Your Tinnitus Snapshot",
-  intro:
-    "Before moving to the next assessment, we would like to understand how your tinnitus feels right now.",
-  questions: [
-    {
-      key: "snapshot_loudness_now",
-      type: "scale",
-      prompt: "How loud is your tinnitus right now?",
-      scaleLabels: { low: "Not audible", high: "Extremely loud" },
-    },
-    {
-      key: "snapshot_noticeability_now",
-      type: "scale",
-      prompt: "How noticeable is your tinnitus right now?",
-      scaleLabels: { low: "Not noticeable", high: "Extremely noticeable" },
-    },
-    {
-      key: "snapshot_bothersome_now",
-      type: "scale",
-      prompt: "How bothersome is your tinnitus right now?",
-      scaleLabels: { low: "Not bothersome", high: "Extremely bothersome" },
-    },
-  ],
-};
-
 /* ------------------------------------------------------------------------- */
 /* Mapping onto the four replaced legacy fields                              */
 /* ------------------------------------------------------------------------- */

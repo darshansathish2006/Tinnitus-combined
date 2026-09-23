@@ -39,9 +39,7 @@ import { engine } from "../audio/engine";
 import { CHARACTER_OPTIONS } from "../audio/procedures";
 import {
   Chip,
-  Disclosure,
   ErrorState,
-  Field,
   Loading,
   Panel,
   Readout,
@@ -56,7 +54,6 @@ import { ClinicalSummary } from "./Results";
 import { AboutYouExtended } from "./assessment/AboutYouExtended";
 import {
   ABOUT_YOU_SECTIONS,
-  SNAPSHOT_SECTION,
   lateralityFromLocation,
   type AboutYouAnswer,
   type AboutYouAnswers,
@@ -89,19 +86,6 @@ const STEPS = [
   { key: "hearing", minutes: 6 },
   { key: "optional", minutes: 0 },
   { key: "results", minutes: 0 },
-];
-
-/**
- * Comorbidity values are stored on the patient record in English — they are the
- * vocabulary the clinical record, the ML feature vector and the exported report
- * all share, and translating what gets *written* would fork the data by the
- * language the patient happened to be using. Only the label is translated; the
- * English string stays the value.
- */
-const COMORBIDITY_OPTIONS = [
-  "Hypertension", "Type 2 diabetes", "Migraine", "Anxiety disorder", "Depression",
-  "Vertigo", "Neck pain", "Jaw pain / TMJ", "Hypothyroidism", "Head injury",
-  "Ear infection history", "Headache", "Visual disturbance",
 ];
 
 /**
@@ -738,7 +722,7 @@ export default function Assessment() {
               </div>
 
               <AboutYouExtended
-                sections={[...ABOUT_YOU_SECTIONS, SNAPSHOT_SECTION]}
+                sections={ABOUT_YOU_SECTIONS}
                 answers={aboutYou}
                 onAnswer={setAboutYouField}
               />
@@ -760,57 +744,6 @@ export default function Assessment() {
                   <p className="meta">{t("assessment.intake.unilateralNote")}</p>
                 </Panel>
               )}
-
-              <Disclosure
-                summary={t("assessment.intake.historyDisclosure")}
-                count={comorbidities.length}
-              >
-                <div className="stack stack-3">
-                  <div className="row row--tight">
-                    {COMORBIDITY_OPTIONS.map((option) => (
-                      <button
-                        key={option}
-                        type="button"
-                        className={`chip ${comorbidities.includes(option) ? "chip--signal" : "chip--ghost"}`}
-                        style={{ cursor: "pointer" }}
-                        onClick={() =>
-                          setComorbidities((prev) =>
-                            prev.includes(option) ? prev.filter((c) => c !== option) : [...prev, option]
-                          )
-                        }
-                      >
-                        {t(`assessment.comorbidity.${option}`, { defaultValue: option })}
-                      </button>
-                    ))}
-                  </div>
-                  <Field
-                    label={t("assessment.intake.medication")}
-                    hint={t("assessment.intake.medicationHint")}
-                  >
-                    <textarea
-                      className="textarea"
-                      value={medications}
-                      onChange={(e) => setMedications(e.target.value)}
-                      placeholder={t("assessment.intake.medicationPlaceholder")}
-                    />
-                  </Field>
-                </div>
-              </Disclosure>
-
-              <label className="option" style={{ cursor: "pointer" }}>
-                <input
-                  type="checkbox"
-                  checked={consent}
-                  onChange={(e) => setConsent(e.target.checked)}
-                  style={{ accentColor: "var(--signal)", width: 16, height: 16 }}
-                />
-                <span style={{ minWidth: 0 }}>
-                  <span style={{ display: "block" }}>{t("assessment.intake.consent")}</span>
-                  <span className="meta" style={{ display: "block" }}>
-                    {t("assessment.intake.consentHelp")}
-                  </span>
-                </span>
-              </label>
 
               <div className="row row--end">
                 <button type="button" className="btn btn--primary btn--lg" onClick={submitIntake} disabled={saving}>

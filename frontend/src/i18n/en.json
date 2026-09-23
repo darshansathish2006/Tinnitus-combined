@@ -358,11 +358,11 @@
     "loadingRecord": "Loading your record",
     "workingOutResults": "Working out your results",
     "steps": {
-      "intake": "About you",
+      "intake": "About Your Tinnitus",
       "hearing": "Hearing measurement",
       "questionnaires": "How it affects you",
       "results": "Your results",
-      "questionnaire": "About your tinnitus",
+      "questionnaire": "Core Tinnitus Assessment",
       "screeners": "Sleep, mood and stress",
       "optional": "Optional testing"
     },
@@ -385,12 +385,6 @@
       "pulsatile": "It pulses in time with my heartbeat",
       "pulsatileHelp": "This changes the pathway — it needs a vascular assessment.",
       "hearingAids": "I wear hearing aids",
-      "historyDisclosure": "Medical history and medication (optional)",
-      "medication": "Current medication",
-      "medicationHint": "Comma separated, with doses if you know them.",
-      "medicationPlaceholder": "e.g. Amitriptyline 10 mg at night, Vitamin D",
-      "consent": "Allow my anonymised data to be used for research",
-      "consentHelp": "Optional, and it changes nothing about your care. Only de-identified values ever leave the platform.",
       "continue": "Continue to the hearing measurement"
     },
     "character": {

@@ -221,7 +221,7 @@ function AboutYourTinnitusCard({
   ];
 
   return (
-    <DashboardCard title={t("results.dashboard.aboutYourTinnitus", "About your tinnitus")} icon={IconTrend}>
+    <DashboardCard title={t("results.dashboard.aboutYourTinnitus", "Core Tinnitus Assessment")} icon={IconTrend}>
       <div className="stack stack-5">
         {domains.map((d) => (
           <div

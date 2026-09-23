@@ -136,7 +136,7 @@ const SECTIONS: Section[] = [
       "Three required steps, roughly 10 minutes, plus optional extras you are asked about rather than given. Each step saves as you finish it, so you can stop and come back.",
     entries: [
       {
-        label: "Step 1 — About you",
+        label: "Step 1 — About Your Tinnitus",
         entry: {
           what: "What your tinnitus sounds like, which ear, how long you have had it, and a few yes/no questions.",
           how: "Some answers change the whole pathway. A percept that pulses with your heartbeat, or one strictly in one ear, is handled differently from the start.",

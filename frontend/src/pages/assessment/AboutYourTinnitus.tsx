@@ -1,5 +1,10 @@
 /**
- * "About Your Tinnitus" — Module 2.
+ * "Core Tinnitus Assessment" — Module 2 (internal component/module key is
+ * unchanged; only the display name shown in the step rail and headings was
+ * renamed, from the old "About Your Tinnitus" — see `assessment.steps.questionnaire`.
+ * "About Your Tinnitus" is now Module 1's display name instead — the
+ * extended history questionnaire, `AboutYouExtended.tsx` — a display-only
+ * swap that does not touch either module's data, keys, or APIs.
  *
  * Replaces the old two-instrument questionnaire step (VAS + THI-5) and the old
  * separate "Sleep, mood and stress" step. Neither of those exists as a
@@ -10,11 +15,15 @@
  * `MODULE2_SECTIONS`'s `required` flag (the frontend twin of
  * `backend/api/views.py::MODULE2_DOMAINS`):
  *
- *   - **Core Tinnitus Assessment** (VAS, THI, TFI) — mandatory. No Skip is
- *     offered (see `allowSkip` below); the module cannot be considered
- *     core-complete, and `onAllDone` cannot be reached, until all three carry
- *     `questionnaire_status === "completed"`. A "skipped" status is never
- *     treated as complete — see `coreComplete` in the wizard component.
+ *   - **Core Tinnitus Assessment** (VAS, THI, TFI) — labelled "Required" as
+ *     assessment-status metadata (no Skip is offered — see `allowSkip`
+ *     below), but that label is informational only: reaching `onAllDone` and
+ *     leaving for the Hearing step is allowed regardless of `coreComplete`,
+ *     so a patient can always come back and finish later. Completion status
+ *     itself is untouched by this — an instrument left incomplete still
+ *     carries `questionnaire_status !== "completed"`, never silently marked
+ *     done just because the patient moved on. A "skipped" status is likewise
+ *     never treated as complete — see `coreComplete` in the wizard component.
  *   - **Optional Wellbeing Assessment** (ISI, GAD-7, PHQ-9, PSS-10,
  *     WHOQOL-BREF) — each freely completable now or skippable for later, and
  *     none of the five block reaching the Hearing step.
@@ -681,13 +690,35 @@ function GuidedInstrumentSectionForm({
                 </div>
               ))}
             </div>
+          ) : item && isSliderItem(item) ? (
+            // TFI only (see `isSliderItem`) — the slider's own vertical
+            // position must stay identical from question to question, but
+            // TFI's context line and question text vary from one line to
+            // three depending on the item, and this content well is
+            // vertically *centered* (`justifyContent: "center"` above), so a
+            // shorter or taller text block above the slider shifts where the
+            // slider itself lands. Reserving a fixed-height region for the
+            // context+text — instead of letting it size to content, as every
+            // other instrument here still does — makes that combined block
+            // the same height for every TFI item, so the slider beneath it
+            // never moves. Purely layout: no change to the item, its value,
+            // or how the answer is recorded (still `TfiSlider`/`selectOption`
+            // unchanged).
+            <div className="stack stack-3">
+              <div
+                className="stack stack-1"
+                style={{ minHeight: "11em", display: "flex", flexDirection: "column", justifyContent: "center" }}
+              >
+                {item.context && <p className="meta dim">{item.context}</p>}
+                <p style={{ fontSize: "var(--fs-lead)", lineHeight: 1.5, maxWidth: "40em" }}>{itemText(t, item)}</p>
+              </div>
+              <TfiSlider item={item} value={answers[item.id]} onCommit={selectOption} disabled={saving} />
+            </div>
           ) : item ? (
             <div className="stack stack-3">
               {item.context && <p className="meta dim">{item.context}</p>}
               <p style={{ fontSize: "var(--fs-lead)", lineHeight: 1.5, maxWidth: "40em" }}>{itemText(t, item)}</p>
-              {isSliderItem(item) ? (
-                <TfiSlider item={item} value={answers[item.id]} onCommit={selectOption} disabled={saving} />
-              ) : isCompactScaleItem(item) ? (
+              {isCompactScaleItem(item) ? (
                 <NumberedScale item={item} options={options} value={answers[item.id]} onSelect={selectOption} disabled={saving} />
               ) : (
                 <>
@@ -1323,7 +1354,7 @@ export default function AboutYourTinnitus({
       <p className="lead" style={{ fontSize: "var(--fs-body)", maxWidth: "48em" }}>
         {t("assessment.module2.intro", {
           defaultValue:
-            "About Your Tinnitus is in two parts: a required Core Tinnitus Assessment, and an Optional Wellbeing Assessment covering sleep, anxiety, mood, stress, and quality of life.",
+            "This part of the assessment has two sections: a required Core Tinnitus Assessment, and an Optional Wellbeing Assessment covering sleep, anxiety, mood, stress, and quality of life.",
         })}
       </p>
 
@@ -1411,14 +1442,20 @@ export default function AboutYourTinnitus({
 
       <div className="stack stack-2">
         <div className="row row--end">
-          <button type="button" className="btn btn--primary" onClick={onAllDone} disabled={!coreComplete}>
+          {/* "Required" on VAS/THI/TFI above is informational assessment-status
+              metadata, not a navigation gate — the patient can always continue
+              and come back to finish them later, the same way the Optional
+              Wellbeing instruments already work. Nothing here marks an
+              incomplete instrument as completed; `coreComplete`/`coreDone`
+              above still reflect the real per-instrument status. */}
+          <button type="button" className="btn btn--primary" onClick={onAllDone}>
             {t("assessment.module2.continueToHearing", { defaultValue: "Continue" })} →
           </button>
         </div>
         {!coreComplete && (
           <p className="meta dim" style={{ textAlign: "right" }}>
-            {t("assessment.module2.continueBlocked", {
-              defaultValue: "Complete VAS, THI and TFI to continue — optional assessments do not block this.",
+            {t("assessment.module2.continueNote", {
+              defaultValue: "Required for the core tinnitus assessment, but you can continue and return later.",
             })}
           </p>
         )}
