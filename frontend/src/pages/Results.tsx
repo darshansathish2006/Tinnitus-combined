@@ -306,20 +306,37 @@ export default function Results() {
         <ErrorState error={report.error} retry={report.reload} />
       ) : !data || !detail ? null : (
         <>
-          {/* ================================================== summary === */}
-          <ClinicalSummary report={data} detail={detail} />
-
           {/* ============================== 04 · tinnitus assessment results === */}
-          {/* Everything here is additive to the plain summary above — the same
-              report, read into the fuller dashboard structure, never a second
-              source of truth for the same numbers. See
+          {/* The primary Results experience: "Your tinnitus assessment
+              results" (the dashboard's own heading, rendered inside it) is
+              now the first thing shown, not a second view reached by
+              scrolling past a separate plain-language page first. See
               `TinnitusAssessmentDashboard.tsx` for exactly which existing
-              calculation backs each card. */}
+              calculation backs each card — nothing here is recomputed. */}
           <TinnitusAssessmentDashboard
             report={data}
             activeAssessment={completed.find((a) => a.id === activeId) ?? null}
             onCompleteInstrument={setCompletingKey}
           />
+
+          {/* ==================================== detailed results === */}
+          {/* `ClinicalSummary` is unchanged — same component, same props,
+              still the one `Assessment.tsx` renders on the assessment
+              flow's own final step — only its position on *this* page
+              moved, from primary/first to this subordinate section, so its
+              narrative framing (hearing/severity verdicts, key findings)
+              no longer duplicates the dashboard above as a competing
+              top-level experience. Everything unique to it — the 3D ear
+              model, the audiometry-review safety flag, the risk-indicators
+              panel, "what happens next" — is preserved exactly as it was. */}
+          <div className="stack stack-5">
+            <div className="row row--tight">
+              <span className="label label--signal">
+                {t("results.detailedResults", "Detailed Results")}
+              </span>
+            </div>
+            <ClinicalSummary report={data} detail={detail} />
+          </div>
 
           {/* -- the gate to everything technical ------------------------- */}
           <button

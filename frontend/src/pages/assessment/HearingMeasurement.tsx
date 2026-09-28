@@ -230,16 +230,20 @@ export interface HearingMeasurementResult {
  * The masker frequency sequence this module administers, in order — the
  * Feldmann masking-curve protocol. A single named constant rather than a
  * value repeated through the UI, so the sequence is configurable in one
- * place: change it here and the instructions, the progress indicator, the
- * results table and the curve chart all follow.
+ * place: change it here and the instructions, the frequency-progress
+ * buttons, the results table and the curve chart all follow. Mirrored in
+ * `backend/api/services/masking.py`'s own `MASKING_FREQUENCIES` — see that
+ * file's comment for why the chart still shows a full record regardless of
+ * which list a given assessment was measured against.
  *
- * Historical records may carry thresholds at other frequencies (250/500 Hz,
- * from before this sequence changed) — those are not lost: `masking_thresholds`
- * is an open map, and both the frontend's local curve preview and the
- * backend's `curve()` builder already plot the union of whatever was tested
- * with this preset list, never just this list alone.
+ * Historical records may carry thresholds at other frequencies (the 3/5/6 kHz
+ * octave points this sequence used to include) — those are not lost:
+ * `masking_thresholds` is an open map, and both the frontend's local curve
+ * preview and the backend's `curve()` builder already plot the union of
+ * whatever was actually tested with this preset list, never just this list
+ * alone.
  */
-const MASKING_FREQUENCIES = [1000, 2000, 3000, 4000, 5000, 6000, 8000];
+const MASKING_FREQUENCIES = [250, 500, 1000, 2000, 4000, 8000];
 
 type Module = "pitch" | "loudness" | "masking";
 
@@ -247,12 +251,18 @@ export default function HearingMeasurement({
   onComplete,
   initial,
   laterality,
+  saving,
 }: {
   onComplete(result: HearingMeasurementResult): void;
   initial?: Partial<HearingMeasurementResult>;
   /** Seeds the pitch-match location screen's default selection — the patient
    *  confirms or changes it there rather than it being asked only once. */
   laterality?: string | null;
+  /** Whether the parent's `onComplete` save is currently in flight — passed
+   *  through to the masking module so its Finish button can disable itself
+   *  and show a saving state rather than allow a second click to fire a
+   *  duplicate save while the first is still pending. */
+  saving?: boolean;
 }) {
   const { t } = useTranslation();
   const [module, setModule] = useState<Module>("pitch");
@@ -384,6 +394,7 @@ export default function HearingMeasurement({
           existingOutcome={maskingOutcome}
           handleRef={handleRef}
           stopSound={stopSound}
+          saving={saving}
           onBack={() => setModule("loudness")}
           onNext={(outcome) => {
             setMaskingOutcome(outcome);
@@ -1295,6 +1306,7 @@ function MaskingModule({
   existingOutcome,
   handleRef,
   stopSound,
+  saving,
   onBack,
   onNext,
 }: {
@@ -1305,6 +1317,10 @@ function MaskingModule({
   existingOutcome: MaskingMatchOutcome | null;
   handleRef: React.MutableRefObject<{ stop(f?: number): void; setLevelDb(db: number, r?: number): void } | null>;
   stopSound(): void;
+  /** True while the parent's save from a previous Finish click is still in
+   *  flight — disables Finish so a second click cannot fire a duplicate,
+   *  racing save of the same result (Part 4). */
+  saving?: boolean;
   onBack(): void;
   onNext(outcome: MaskingMatchOutcome): void;
 }) {
@@ -1317,7 +1333,12 @@ function MaskingModule({
 
   const finder = useRef<MaskingLevelFinder | null>(null);
   const hz = MASKING_FREQUENCIES[freqIndex];
-  const ceiling = Math.min(85, Math.round(engine.maxReachableHl(hz))); // MAX_SAFE_MASKING_DB, backend/api/services/masking.py
+  // 0-90 dB is the masking-level slider's own requested range (wider than
+  // MaskingLevelFinder's own default 85 dB ceiling) — still clamped to what
+  // this frequency/device combination can actually reach, the same pattern
+  // every other level control in this app (Pitch Match's comfort level,
+  // Audiometry's manual mode) already uses `engine.maxReachableHl` for.
+  const ceiling = Math.min(90, Math.round(engine.maxReachableHl(hz)));
 
   async function playAt(centreHz: number, dbHL: number, ms = 2000) {
     await engine.resume();
@@ -1346,9 +1367,24 @@ function MaskingModule({
 
   function beginFrequency(index: number) {
     const start = startingLevelFor(index);
-    finder.current = new MaskingLevelFinder(start, -10, ceiling);
+    // minDb is 0 here (was -10) to match the masking-level slider's own
+    // requested 0-90 dB range — the coarse/fine search logic in
+    // MaskingLevelFinder is unaffected, it only ever changes where the
+    // bracket is allowed to reach.
+    finder.current = new MaskingLevelFinder(start, 0, ceiling);
     setLevel(finder.current.currentLevel);
     setMScreen("measuring");
+  }
+
+  /** The patient drags the masking-level slider — overrides where the *next*
+   *  presentation plays from (see `MaskingLevelFinder.setLevel`) without
+   *  touching phase, trial history or the coarse/fine stepping rule; the
+   *  next automatic step (if the patient never touches the slider again)
+   *  still runs from here exactly as it always has from wherever `level`
+   *  stood. */
+  function adjustLevel(db: number) {
+    finder.current?.setLevel(db);
+    setLevel(db);
   }
 
   function respond(response: MaskingResponse) {
@@ -1390,26 +1426,65 @@ function MaskingModule({
   const testedCount = results.length;
   const totalCount = MASKING_FREQUENCIES.length;
 
+  /** Six fixed buttons, always in ascending order, showing completed / current
+   *  / not-yet-reached — a progress display, not a navigation control: the
+   *  measurement sequence stays mandatory and sequential (no onClick), so a
+   *  patient can never jump ahead to a later frequency. */
+  function FrequencyProgress() {
+    return (
+      <div
+        className="row row--tight row--wrap"
+        role="group"
+        aria-label={t("hearing.masking.frequencyProgress", "Masking frequency")}
+      >
+        {MASKING_FREQUENCIES.map((f, i) => {
+          const isDone = results.some((r) => r.frequency_hz === f);
+          const isCurrent = i === freqIndex && mScreen !== "result";
+          const label = f >= 1000 ? `${f / 1000} kHz` : `${f} Hz`;
+          return (
+            <button
+              key={f}
+              type="button"
+              tabIndex={-1}
+              className={`btn btn--sm${isCurrent ? " btn--primary" : ""}`}
+              aria-pressed={isCurrent}
+              aria-label={`${label}${isDone ? ` — ${t("hearing.masking.freqDone", "completed")}` : isCurrent ? ` — ${t("hearing.masking.freqCurrent", "current")}` : ""}`}
+            >
+              {isDone && <IconCheck size={13} />}
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
     <div className="stack stack-5">
       <Panel title={t("hearing.masking.title", "Find Your Tinnitus Masking Levels")} bracketed>
+        {mScreen !== "instructions" && (
+          <div style={{ marginBottom: "var(--s5)" }}>
+            <FrequencyProgress />
+          </div>
+        )}
+
         {/* -- screen 1 · instructions ------------------------------------- */}
         {mScreen === "instructions" && (
           <div className="stack stack-5">
             <p style={{ fontSize: "var(--fs-small)", maxWidth: "50em", lineHeight: 1.6 }}>
               {t(
                 "hearing.masking.instructions",
-                "You will hear a soft masking sound at different pitches. For each sound, we will gradually adjust its loudness."
+                "You will hear a soft masking sound at six fixed pitches, from 250 Hz to 8 kHz. For each one, you set the loudness yourself with a slider."
               )}
             </p>
             <p style={{ fontSize: "var(--fs-small)", maxWidth: "50em", lineHeight: 1.6 }}>
               {t(
                 "hearing.masking.instructions2",
-                "Tell us whether you can still hear your tinnitus. The app will automatically adjust the sound level."
+                "Tell us whether you can still hear your tinnitus at the level you chose."
               )}
             </p>
             <p style={{ fontSize: "var(--fs-small)", maxWidth: "50em" }}>
-              {t("hearing.masking.instructions3", "You do not need to adjust the volume yourself.")}
+              {t("hearing.masking.instructions3", "All six frequencies are required, in order, before this step can finish.")}
             </p>
             <div className="row row--end">
               <button type="button" className="btn btn--primary btn--lg" onClick={() => setMScreen("stimulus_intro")}>
@@ -1427,7 +1502,7 @@ function MaskingModule({
             <p style={{ fontSize: "var(--fs-small)", maxWidth: "50em", lineHeight: 1.6 }}>
               {t(
                 "hearing.masking.autoFrequencyNote",
-                "The app automatically changes the frequency of the masking sound during the assessment. You don't need to select the frequency."
+                "The masking frequency moves through the six fixed points above automatically, in order — you don't need to select it."
               )}
             </p>
             <div className="row row--end">
@@ -1458,6 +1533,20 @@ function MaskingModule({
               {t("hearing.masking.currentFrequency", { hz, defaultValue: `Current masking frequency: ${hz} Hz` })}
             </p>
 
+            <SteppedSlider
+              value={level}
+              min={0}
+              max={ceiling}
+              step={1}
+              onChange={adjustLevel}
+              format={(v) => `${v} dB`}
+              label={t("hearing.masking.levelLabel", "Masking level")}
+              ariaLabel={t("hearing.masking.levelLabel", "Masking level")}
+              lowLabel="0 dB"
+              highLabel={`${ceiling} dB`}
+              tone="data"
+            />
+
             <div className="row">
               <button type="button" className="btn btn--primary" onClick={() => playAt(hz, level)}>
                 <IconPlay size={15} />
@@ -1478,14 +1567,11 @@ function MaskingModule({
               </button>
             </div>
 
-            <div className="row row--between">
-              <span className="meta dim">
-                {finder.current.phase === "fine"
-                  ? t("hearing.masking.findingMinimum", "Finding the minimum level…")
-                  : t("hearing.masking.adjusting", "Adjusting loudness…")}
-              </span>
-              <span className="meta dim mono">{t("hearing.masking.levelValue", { db: level, defaultValue: `${level} dB` })}</span>
-            </div>
+            <p className="meta dim">
+              {finder.current.phase === "fine"
+                ? t("hearing.masking.findingMinimum", "Finding the minimum level…")
+                : t("hearing.masking.adjusting", "Adjust the slider, then answer above.")}
+            </p>
           </div>
         )}
 
@@ -1556,11 +1642,13 @@ function MaskingModule({
             )}
 
             <div className="row row--between">
-              <button type="button" className="btn btn--ghost" onClick={repeatAssessment}>
+              <button type="button" className="btn btn--ghost" onClick={repeatAssessment} disabled={saving}>
                 {t("hearing.masking.repeatAssessment", "Repeat Assessment")}
               </button>
-              <button type="button" className="btn btn--primary btn--lg" onClick={done}>
-                {t("hearing.masking.finishButton", "Finish")}
+              <button type="button" className="btn btn--primary btn--lg" onClick={done} disabled={saving}>
+                {saving
+                  ? t("hearing.masking.finishSaving", "Saving…")
+                  : t("hearing.masking.finishButton", "Finish")}
               </button>
             </div>
           </div>

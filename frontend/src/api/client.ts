@@ -459,6 +459,12 @@ export interface Assessment {
   masking_trace?: unknown[];
   masking_not_sure_count?: number | null;
   masking_repeated?: boolean;
+  /** {"1000": 32, ...} — per-frequency minimum masking level, dB HL. */
+  masking_thresholds?: Record<string, number>;
+  masking_unmasked_hz?: number[];
+  /** The raw dB HL loudness match — distinct from `loudness_match_db_sl`
+   *  below (sensation level, relative to threshold at the matched pitch). */
+  loudness_match_db_hl?: number | null;
   loudness_match_db_sl: number | null;
   mml_db_sl: number | null;
   ri_depth_pct: number | null;

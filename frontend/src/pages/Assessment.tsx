@@ -32,11 +32,11 @@
 
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Trans, useTranslation } from "react-i18next";
+import { useTranslation } from "react-i18next";
 import { api, ApiError, type Analysis, type Assessment as AssessmentRow } from "../api/client";
 import { useSession } from "../state/session";
 import { engine } from "../audio/engine";
-import { CHARACTER_OPTIONS } from "../audio/procedures";
+import { CHARACTER_OPTIONS, MaskingLevelFinder } from "../audio/procedures";
 import {
   Chip,
   ErrorState,
@@ -60,7 +60,7 @@ import {
 } from "./assessment/aboutYouQuestions";
 import Calibration, { type CalibrationResult } from "./assessment/Calibration";
 import Audiometry, { type AudiometryResult } from "./assessment/Audiometry";
-import TinnitusMatch, { type MatchResult } from "./assessment/TinnitusMatch";
+import TinnitusMatch, { thresholdAt, type MatchResult } from "./assessment/TinnitusMatch";
 import AboutYourTinnitus from "./assessment/AboutYourTinnitus";
 import HearingMeasurement, {
   MASKING_FREQUENCIES,
@@ -111,15 +111,10 @@ export default function Assessment() {
   const [fatal, setFatal] = useState<unknown>(null);
 
   const [hearingPhase, setHearingPhase] = useState<HearingPhase>("calibration");
-  /** Kept so the results step can show the curve without a refetch. */
+  /** Kept so the results step can show the curve without a refetch, and so
+   *  the Residual Inhibition step (below) can derive its masker's frequency
+   *  and level from this same-session result without waiting on a refetch. */
   const [measurement, setMeasurement] = useState<HearingMeasurementResult | null>(null);
-  // Screeners no longer gate this offer — the "Sleep, mood and stress" module
-  // that used to precede it inside this same step was removed and folded into
-  // Module 2 (About Your Tinnitus), which now runs entirely at step 1. Step 3
-  // is reached only after hearing measurement is done, so the offer can show
-  // immediately rather than waiting on a flag another module used to flip.
-  const [offerOptional, setOfferOptional] = useState(true);
-  const [doingOptional, setDoingOptional] = useState(false);
 
   const profile = useAsync(() => api.patients.me(), []);
   const instruments = useAsync(() => api.assessments.instruments(), []);
@@ -583,33 +578,24 @@ export default function Assessment() {
     }
   }
 
+  /**
+   * Residual Inhibition's own result. `tinnitus_bandwidth`, the pitch/loudness
+   * match fields and the LDL/MML fields are deliberately not sent here any
+   * more — this step no longer measures them (see `riStimulus`, below); they
+   * are Hearing Measurement's own fields (`submitHearingMeasurement`), and
+   * resubmitting stale or null copies here would overwrite that record
+   * rather than leave it alone, which a partial `PATCH` correctly avoids by
+   * simply not naming those keys.
+   */
   async function submitMatch(result: MatchResult) {
     setSaving(true);
     try {
       await saveModule(
         {
-          tinnitus_bandwidth: result.tinnitus_bandwidth,
-          pitch_match_hz: result.pitch_match_hz,
-          pitch_match_confidence: result.pitch_match_confidence,
-          pitch_match_ear: result.pitch_match_ear,
-          octave_confusion: result.octave_confusion,
-          pitch_match_trace: result.pitch_match_trace,
-          loudness_match_db_hl: result.loudness_match_db_hl,
-          loudness_match_db_sl: result.loudness_match_db_sl,
-          mml_db_sl: result.mml_db_sl,
-          ldl_left: result.ldl_left,
-          ldl_right: result.ldl_right,
-          ldl_trace: result.ldl_trace,
-          ldl_repeated: result.ldl_repeated,
           ri_depth_pct: result.ri_depth_pct,
           ri_duration_s: result.ri_duration_s,
           ri_trace: result.ri_trace,
-          // The patient's own verdict and the masker frequency travel with the
-          // measurements they qualify. Both are optional on the serializer, so
-          // a run that skipped the question or left the band on-pitch submits
-          // the same payload it always did.
           ri_reported_category: result.ri_reported_category,
-          mml_masker_hz: result.mml_masker_hz,
           ri_immediate_response: result.ri_immediate_response,
           ri_baseline_pct: result.ri_baseline_pct,
           ri_post_stimulation_pct: result.ri_post_stimulation_pct,
@@ -623,9 +609,8 @@ export default function Assessment() {
           ri_return_to_baseline_at: result.ri_return_to_baseline_at,
           ri_repeated: result.ri_repeated,
         },
-        ["pitch_match", "loudness_match", "mml", "residual_inhibition"]
+        ["residual_inhibition"]
       );
-      setDoingOptional(false);
       await finalise();
     } catch (error) {
       setFatal(error);
@@ -642,7 +627,6 @@ export default function Assessment() {
       const finalised = await api.assessments.finalise(assessment.id);
       setAssessment(finalised.assessment);
       setAnalysis(finalised.analysis);
-      setOfferOptional(false);
       if (finalised.analysis.red_flags.requires_human_review) {
         toast(t("assessment.toast.redFlags"), "crit");
       } else {
@@ -661,6 +645,56 @@ export default function Assessment() {
   if (profile.error) return <ErrorState error={profile.error} retry={profile.reload} />;
 
   const totalMinutes = STEPS.reduce((sum, s) => sum + s.minutes, 0);
+
+  /**
+   * Residual Inhibition's masker frequency and level, derived from the
+   * patient's own Hearing Measurement results rather than re-measured in
+   * TinnitusMatch (see that file's top-of-file comment for why). Prefers
+   * the in-memory `measurement` from this same visit; falls back to the
+   * persisted `assessment` fields for a session resumed after a reload.
+   *
+   *  - Frequency: the patient's matched tinnitus pitch (`pitch_match_hz`).
+   *  - Level: the measured masking threshold closest (by octave distance)
+   *    to that pitch, plus the same 10 dB margin this masker has always
+   *    run above the patient's masking level (`RI_LEVEL_MARGIN_DB`,
+   *    unchanged from the historical `mmlDbHl + 10`). If no masking-curve
+   *    data exists, falls back to the loudness match converted to dB HL
+   *    (via the existing loudness-to-masking margin) plus that same
+   *    margin — the same seeding this app's own masking-curve module
+   *    already uses when no masking measurement exists yet.
+   */
+  const RI_LEVEL_MARGIN_DB = 10;
+  const riStimulus = ((): { pitchHz: number | null; levelDb: number | null } => {
+    const pitchHz = measurement?.pitch_match_hz ?? assessment?.pitch_match_hz ?? null;
+    if (pitchHz === null) return { pitchHz: null, levelDb: null };
+
+    const maskingThresholds = measurement?.masking_thresholds ?? assessment?.masking_thresholds ?? {};
+    let closestDb: number | null = null;
+    let closestOctaveDiff = Infinity;
+    for (const [hzStr, db] of Object.entries(maskingThresholds)) {
+      const diff = Math.abs(Math.log2(Number(hzStr) / pitchHz));
+      if (diff < closestOctaveDiff) {
+        closestOctaveDiff = diff;
+        closestDb = db;
+      }
+    }
+    if (closestDb !== null) return { pitchHz, levelDb: closestDb + RI_LEVEL_MARGIN_DB };
+
+    // No masking-curve data — fall back to the loudness match. The raw dB HL
+    // value lives on `measurement` in the same session; a resumed session
+    // only has the persisted `loudness_match_db_sl`, recovered to dB HL via
+    // the threshold at the matched pitch (SL = HL − threshold, so HL = SL +
+    // threshold — the same relationship this app's SL/HL conversions
+    // already use elsewhere).
+    const referenceEar = laterality === "left" ? "left" : "right";
+    const loudnessHl =
+      measurement?.loudness_match_db_hl ??
+      (assessment?.loudness_match_db_sl != null
+        ? assessment.loudness_match_db_sl + (thresholdAt(assessment?.audiogram ?? {}, referenceEar, pitchHz) ?? 0)
+        : null);
+    if (loudnessHl == null) return { pitchHz, levelDb: null };
+    return { pitchHz, levelDb: loudnessHl + MaskingLevelFinder.LOUDNESS_TO_MASKING_MARGIN_DB + RI_LEVEL_MARGIN_DB };
+  })();
 
   return (
     <div className="stack stack-6" data-tour="assessment">
@@ -876,6 +910,7 @@ export default function Assessment() {
               onComplete={submitHearingMeasurement}
               initial={measurement ?? undefined}
               laterality={laterality}
+              saving={saving}
             />
           ) : (
             /* Last, because it is derived from the three above rather than a
@@ -889,82 +924,20 @@ export default function Assessment() {
         </div>
       )}
 
-      {/* ================================================== 3 · optional === */}
-      {/* The old "Sleep, mood and stress" module used to run here before this
-          offer; it no longer exists as a separate step (its questionnaires
-          moved into Module 2 at step 1), so this offer is now this step's
-          entire content. */}
-      {/* -- optional psychoacoustics offer ---------------------------------- */}
-      {step === 3 && offerOptional && !doingOptional && (
-        <div className="grid grid-sidebar" style={{ ["--aside" as string]: "300px" }}>
-          <Panel title={t("assessment.optional.title")} bracketed tone="signal">
-            <div className="stack stack-5">
-              <p className="lead" style={{ fontSize: "var(--fs-body)" }}>
-                {t("assessment.optional.lead")}
-              </p>
-
-              <div className="grid grid-2">
-                <Panel tone="sunken" tight>
-                  <span className="label" style={{ color: "var(--ok-ink)" }}>
-                    {t("assessment.optional.givesTitle")}
-                  </span>
-                  <ul className="stack stack-1" style={{ paddingLeft: "var(--s5)", fontSize: "var(--fs-small)", marginTop: "var(--s2)" }}>
-                    <li>
-                      <Trans i18nKey="assessment.optional.gives1" components={[<em key="0" />]} />
-                    </li>
-                    <li>{t("assessment.optional.gives2")}</li>
-                    <li>{t("assessment.optional.gives3")}</li>
-                  </ul>
-                </Panel>
-                <Panel tone="sunken" tight>
-                  <span className="label">{t("assessment.optional.skipTitle")}</span>
-                  <ul className="stack stack-1" style={{ paddingLeft: "var(--s5)", fontSize: "var(--fs-small)", marginTop: "var(--s2)" }}>
-                    <li>{t("assessment.optional.skip1")}</li>
-                    <li>{t("assessment.optional.skip2")}</li>
-                    <li>{t("assessment.optional.skip3")}</li>
-                  </ul>
-                </Panel>
-              </div>
-
-              <Panel tone="info" tight>
-                <p className="meta">{t("assessment.optional.note")}</p>
-              </Panel>
-
-              <div className="row">
-                <button
-                  type="button"
-                  className="btn btn--primary btn--lg"
-                  onClick={() => {
-                    setDoingOptional(true);
-                    window.scrollTo({ top: 0, behavior: "smooth" });
-                  }}
-                >
-                  {t("assessment.optional.accept")}
-                </button>
-                <button type="button" className="btn btn--lg" onClick={finalise} disabled={saving}>
-                  {t("assessment.optional.decline")}
-                </button>
-              </div>
-            </div>
-          </Panel>
-
-          <Panel title={t("assessment.optional.whyTitle")} tight headPlain>
-            <p className="meta">{t("assessment.optional.why1")}</p>
-            <hr className="rule" />
-            <p className="meta">{t("assessment.optional.why2")}</p>
-          </Panel>
-        </div>
-      )}
-
-      {step === 3 && doingOptional && (
+      {/* ================================================== 3 · residual inhibition === */}
+      {/* This step used to offer a whole "psychoacoustic characterisation"
+          battery (character, pitch match, loudness match, sound tolerance +
+          minimum masking level, then residual inhibition) behind an
+          accept/decline screen. Everything except residual inhibition was
+          removed — it duplicated measurements Hearing Measurement already
+          takes — so this step now opens directly on Residual Inhibition
+          itself, sourced below from that same Hearing Measurement result. */}
+      {step === 3 && (
         <TinnitusMatch
-          audiogram={assessment?.audiogram ?? {}}
+          pitchHz={riStimulus.pitchHz}
+          riLevelDb={riStimulus.levelDb}
           laterality={laterality}
           onComplete={submitMatch}
-          onSkip={() => {
-            setDoingOptional(false);
-            void finalise();
-          }}
         />
       )}
 

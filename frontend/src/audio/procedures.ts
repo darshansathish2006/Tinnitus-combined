@@ -382,6 +382,23 @@ export class PitchMatcher {
 /* ------------------------------------------------------------------------- */
 /* Pitch matching — deterministic 2AFC narrowing (patient-facing workflow)    */
 /* ------------------------------------------------------------------------- */
+
+/**
+ * Snap a frequency to the nearest `stepHz`.
+ *
+ * `PitchNarrower`'s bracket lives in log-frequency (octaves), so a raw
+ * `2 ** octave` is a continuous real number — left unrounded, or rounded
+ * only to the nearest whole Hz, the adaptive search can present or store an
+ * arbitrary value like 1590 Hz. Every candidate, and the final match, is
+ * quantized through this one function (with `PitchNarrower.FREQUENCY_STEP_HZ`,
+ * currently 100) so the actual stimulus — not just its on-screen kHz display
+ * — is always a round, step-aligned value. Ties round up (`Math.round`'s own
+ * convention): at a 100 Hz step, 1550 → 1600.
+ */
+export function quantizeFrequencyHz(hz: number, stepHz: number): number {
+  return Math.round(hz / stepHz) * stepHz;
+}
+
 export type PitchAFCResponse = "A" | "B" | "not_sure";
 
 export interface PitchAFCTrial {
@@ -423,6 +440,11 @@ export class PitchNarrower {
   private trials: PitchAFCTrial[] = [];
   private notSureCount = 0;
   private phaseName: "coarse" | "fine" = "coarse";
+  /** The search's own configured range — candidates are clamped inside it
+   *  after quantization, so rounding near an edge (e.g. 11997 Hz toward a
+   *  12000 Hz ceiling) can never push a candidate outside it. */
+  private readonly minHz: number;
+  private readonly maxHz: number;
 
   static readonly MIN_COARSE_TRIALS = 3;
   static readonly MAX_COARSE_TRIALS = 5;
@@ -432,10 +454,29 @@ export class PitchNarrower {
   static readonly NOT_SURE_NUDGE_FRACTION = 1 / 6;
   static readonly COARSE_TO_FINE_GAP_OCT = 1;
   static readonly FINE_STOP_GAP_OCT = 1 / 12;
+  /** Every candidate and the final match are snapped to this grid — see
+   *  `quantizeFrequencyHz`. 100 Hz, not 10: a patient comparing two tones is
+   *  not expected to discriminate a 10 Hz difference, and the coarser grid
+   *  keeps every displayed/played frequency an unambiguous round number. */
+  static readonly FREQUENCY_STEP_HZ = 100;
 
   constructor(startLowHz = 1000, startHighHz = 8000) {
     this.lowOct = Math.log2(startLowHz);
     this.highOct = Math.log2(startHighHz);
+    // Rounded inward to the step once, here, rather than clamping against
+    // the raw constructor bounds on every call: if the configured range's
+    // own edges were not already aligned to `FREQUENCY_STEP_HZ`, clamping a
+    // quantized candidate straight to (say) a 1550 Hz ceiling would silently
+    // produce 1550 — not a multiple of 100. This app's actual range
+    // (1000–8000) is already aligned, so this is a no-op for it and only
+    // matters for a future caller with an odd boundary.
+    this.minHz = Math.ceil(startLowHz / PitchNarrower.FREQUENCY_STEP_HZ) * PitchNarrower.FREQUENCY_STEP_HZ;
+    this.maxHz = Math.floor(startHighHz / PitchNarrower.FREQUENCY_STEP_HZ) * PitchNarrower.FREQUENCY_STEP_HZ;
+  }
+
+  /** Quantize to `FREQUENCY_STEP_HZ` and clamp inside the configured range. */
+  private quantize(hz: number): number {
+    return Math.min(this.maxHz, Math.max(this.minHz, quantizeFrequencyHz(hz, PitchNarrower.FREQUENCY_STEP_HZ)));
   }
 
   get trace(): PitchAFCTrial[] {
@@ -450,9 +491,34 @@ export class PitchNarrower {
     return this.phaseName;
   }
 
-  /** The pair to present right now: A is always the lower frequency. */
+  /**
+   * The pair to present right now: A is always the lower frequency.
+   *
+   * Both are quantized to `FREQUENCY_STEP_HZ` — never the raw `2 ** octave`
+   * value, so the patient is never comparing (and the trial log never
+   * records) an arbitrary Hz value. Once the bracket has narrowed to less
+   * than one step, the two raw candidates can round to the same step-aligned
+   * value; an A/B choice between two identical tones is meaningless, so B is
+   * nudged one step higher (or, at the top of the range, A one step lower)
+   * to keep them distinct without leaving the configured range.
+   */
   pair(): { aHz: number; bHz: number } {
-    return { aHz: Math.round(2 ** this.lowOct), bHz: Math.round(2 ** this.highOct) };
+    const aHz = this.quantize(2 ** this.lowOct);
+    const bHz = this.quantize(2 ** this.highOct);
+    if (aHz !== bHz) return { aHz, bHz };
+    // The bracket has narrowed inside one quantization step and both ends
+    // rounded to the same value. Prefer raising B; only lower A instead if
+    // B is already at the configured ceiling. With this app's actual
+    // 1000–8000 Hz range one of the two always has room, but if neither
+    // did, returning the pair unchanged stays inside the configured bounds
+    // rather than exceeding them.
+    if (bHz + PitchNarrower.FREQUENCY_STEP_HZ <= this.maxHz) {
+      return { aHz, bHz: bHz + PitchNarrower.FREQUENCY_STEP_HZ };
+    }
+    if (aHz - PitchNarrower.FREQUENCY_STEP_HZ >= this.minHz) {
+      return { aHz: aHz - PitchNarrower.FREQUENCY_STEP_HZ, bHz };
+    }
+    return { aHz, bHz };
   }
 
   private gapOct(): number {
@@ -507,9 +573,10 @@ export class PitchNarrower {
     }
   }
 
-  /** The matched frequency: the geometric mean of the final bracket. */
+  /** The matched frequency: the geometric mean of the final bracket,
+   *  quantized the same way every candidate along the way was. */
   result(): number {
-    return Math.round(2 ** ((this.lowOct + this.highOct) / 2));
+    return this.quantize(2 ** ((this.lowOct + this.highOct) / 2));
   }
 
   /**
@@ -802,6 +869,20 @@ export class MaskingLevelFinder {
 
   get currentLevel(): number {
     return this.level;
+  }
+
+  /**
+   * Override the level for the *next* presentation — used when the patient
+   * drags the masking-level slider away from the algorithm's own proposed
+   * value. Clamped to `[minDb, maxDb]`, same as the constructor. Touches
+   * only where the next trial happens from: phase, trial history and
+   * bracket state are untouched, so `respond()`'s own coarse/fine stepping
+   * and stopping rule apply exactly as before, just starting from wherever
+   * the patient left the slider rather than only where the algorithm's own
+   * arithmetic would have put it.
+   */
+  setLevel(db: number): void {
+    this.level = Math.min(this.maxDb, Math.max(this.minDb, db));
   }
 
   get phase(): "coarse" | "fine" {
